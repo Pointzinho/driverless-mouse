@@ -362,7 +362,7 @@
         Envia um pacote HID++ 2.0 padrão (Report ID <code>0x10</code>/curto) para o
         <b>Root (feature 0x0000)</b>: função <code>GetProtocolVersion</code> (Ping) e
         <code>GetFeature</code> para <b>Adjustable DPI (0x2201)</b> e
-        <b>Battery Status (0x1000)</b>. Respostas chegam como <code>inputreport</code> no mesmo
+        <b>Unified Battery (0x1004)</b>. Respostas chegam como <code>inputreport</code> no mesmo
         Report ID e aparecem no log/grade normalmente — filtre por <code>0x10</code> se necessário.
         Detectado automaticamente ao conectar um VID <code>0x046d</code>.
       </p>
@@ -376,6 +376,37 @@
       </p>
       <button id="btn-logitech-ping">Ping / Forçar Leitura Logitech</button>
       <div id="hidpp-progress"></div>
+    </div>
+
+    <div class="panel-title">Enviar Comando HID++ Customizado</div>
+    <div class="sub-panel">
+      <p class="hint">
+        Monta e envia um pacote HID++ 2.0 curto (<code>0x10</code>) à mão, usando o mesmo
+        Device Index configurado acima. Útil para explorar funções dentro de uma feature já
+        localizada (ex: feature idx <code>07</code> = Adjustable DPI, descoberta no handshake)
+        sem precisar editar o código a cada tentativa.
+      </p>
+      <div class="field-row">
+        <label for="custom-feature-index">Feature Index (hex)</label>
+        <input id="custom-feature-index" class="hex-input" type="text" value="00" maxlength="2" />
+      </div>
+      <div class="field-row">
+        <label for="custom-function-id">Function ID (hex)</label>
+        <input id="custom-function-id" class="hex-input" type="text" value="01" maxlength="2" />
+      </div>
+      <div class="field-row">
+        <label for="custom-param1">Parâmetro 1 (hex)</label>
+        <input id="custom-param1" class="hex-input" type="text" value="00" maxlength="2" />
+      </div>
+      <div class="field-row">
+        <label for="custom-param2">Parâmetro 2 (hex)</label>
+        <input id="custom-param2" class="hex-input" type="text" value="00" maxlength="2" />
+      </div>
+      <div class="field-row">
+        <label for="custom-param3">Parâmetro 3 (hex)</label>
+        <input id="custom-param3" class="hex-input" type="text" value="00" maxlength="2" />
+      </div>
+      <button id="btn-custom-send" class="primary">Enviar Comando Customizado</button>
     </div>
   </section>
 
@@ -416,8 +447,14 @@
     btnProbe: document.getElementById("btn-probe"),
     btnPoll: document.getElementById("btn-poll"),
     btnLogitechPing: document.getElementById("btn-logitech-ping"),
+    btnCustomSend: document.getElementById("btn-custom-send"),
     pollReportId: document.getElementById("poll-report-id"),
     hidppDeviceIndex: document.getElementById("hidpp-device-index"),
+    customFeatureIndex: document.getElementById("custom-feature-index"),
+    customFunctionId: document.getElementById("custom-function-id"),
+    customParam1: document.getElementById("custom-param1"),
+    customParam2: document.getElementById("custom-param2"),
+    customParam3: document.getElementById("custom-param3"),
     probeProgress: document.getElementById("probe-progress"),
     hidppProgress: document.getElementById("hidpp-progress"),
     deviceInfo: document.getElementById("device-info"),
@@ -769,8 +806,10 @@
     await sendHidppShort(deviceIndex, 0x00, 0x00, [0x22, 0x01, 0x00], "GetFeature Adjustable DPI (0x2201)");
     await new Promise((r) => setTimeout(r, 200));
 
-    // 3. Resolve o índice da feature Battery Unified Level Status (0x1000).
-    await sendHidppShort(deviceIndex, 0x00, 0x00, [0x10, 0x00, 0x00], "GetFeature Battery Status (0x1000)");
+    // 3. Resolve o índice da feature Unified Battery (0x1004) — substitui a antiga
+    //    Battery Unified Level Status (0x1000), não suportada em modelos mais recentes
+    //    como o G502 X (confirmado: Root retornou índice 0x00 para 0x1000).
+    await sendHidppShort(deviceIndex, 0x00, 0x00, [0x10, 0x04, 0x00], "GetFeature Unified Battery (0x1004)");
 
     els.btnLogitechPing.disabled = false;
     els.hidppProgress.textContent = "";
@@ -780,6 +819,27 @@
       "Os IDs de função para ler o valor de DPI/bateria dentro dessas features específicas variam por " +
       "firmware — use esse índice junto com a grade de bytes para descobrir por tentativa."
     );
+  }
+
+  // ------------------------------------------------------------------
+  // Console HID++ customizado — monta e envia um pacote curto (0x10)
+  // com Feature Index / Function ID / Parâmetros escolhidos manualmente.
+  // Use isso para explorar funções dentro de uma feature já resolvida
+  // pelo handshake (ex: feature idx 07 = Adjustable DPI) sem editar código.
+  // ------------------------------------------------------------------
+
+  async function sendCustomHidppCommand() {
+    if (!device) { alert("Conecte um mouse primeiro."); return; }
+
+    const deviceIndex = parseHexInput(els.hidppDeviceIndex, 0xff);
+    const featureIndex = parseHexInput(els.customFeatureIndex, 0x00);
+    const functionId = parseHexInput(els.customFunctionId, 0x01) & 0x0f; // função ocupa só 4 bits
+    const p1 = parseHexInput(els.customParam1, 0x00);
+    const p2 = parseHexInput(els.customParam2, 0x00);
+    const p3 = parseHexInput(els.customParam3, 0x00);
+
+    const label = `Custom (feature idx 0x${toHex(featureIndex)}, função ${functionId}, params ${toHex(p1)} ${toHex(p2)} ${toHex(p3)})`;
+    await sendHidppShort(deviceIndex, featureIndex, functionId, [p1, p2, p3], label);
   }
 
   // ------------------------------------------------------------------
@@ -793,6 +853,7 @@
   els.btnProbe.addEventListener("click", probeFeatureReports);
   els.btnPoll.addEventListener("click", togglePoll);
   els.btnLogitechPing.addEventListener("click", logitechHandshake);
+  els.btnCustomSend.addEventListener("click", sendCustomHidppCommand);
   els.btnPause.addEventListener("click", () => {
     paused = !paused;
     els.btnPause.textContent = paused ? "Retomar captura" : "Pausar captura";
