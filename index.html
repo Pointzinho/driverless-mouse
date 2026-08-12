@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>driverless-mouse</title>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" />
+<link href="https://cdnjs.cloudflare.com/ajax/libs/jetbrains-mono/2.304/JetBrainsMono.min.css" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0a0f12;
+    --bg-elev: #10171b;
+    --bg-card: #131b20;
+    --line: #212d33;
+    --text: #e4ebed;
+    --text-dim: #7c8f97;
+    --text-faint: #4c5a60;
+    --signal: #ffb000;
+    --signal-soft: rgba(255, 176, 0, 0.12);
+    --stable: #4fd1c5;
+    --stable-soft: rgba(79, 209, 197, 0.12);
+    --danger: #ff5d5d;
+    --danger-soft: rgba(255, 93, 93, 0.12);
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 15% -10%, rgba(255, 176, 0, 0.07), transparent 40%),
+      radial-gradient(circle at 100% 0%, rgba(79, 209, 197, 0.05), transparent 45%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+
+  /* ---------------- Header ---------------- */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 40px;
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--signal), #ff8a00);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+    font-weight: 700;
+    color: #17110a;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .brand p {
+    margin: 2px 0 0;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+  }
+
+  /* ---------------- Botões ---------------- */
+  button {
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--bg-elev);
+    color: var(--text);
+    padding: 12px 20px;
+    cursor: pointer;
+    transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+  button:hover:not(:disabled) { border-color: var(--signal); transform: translateY(-1px); }
+  button:active:not(:disabled) { transform: translateY(0); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary {
+    background: linear-gradient(135deg, var(--signal), #ff9500);
+    color: #16110a;
+    border: none;
+  }
+  button.primary:hover:not(:disabled) { filter: brightness(1.06); }
+  button.ghost { background: transparent; }
+
+  /* ---------------- Estado: desconectado ---------------- */
+  #empty-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 56px 32px;
+    text-align: center;
+  }
+  #empty-panel .icon {
+    width: 56px; height: 56px;
+    margin: 0 auto 20px;
+    border-radius: 50%;
+    background: var(--signal-soft);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #empty-panel h2 {
+    margin: 0 0 8px;
+    font-size: 19px;
+    font-weight: 700;
+  }
+  #empty-panel p {
+    margin: 0 0 28px;
+    color: var(--text-dim);
+    font-size: 14px;
+    max-width: 420px;
+    margin-inline: auto;
+    line-height: 1.6;
+  }
+
+  /* ---------------- Dashboard conectado ---------------- */
+  #dashboard { display: none; flex-direction: column; gap: 20px; }
+  #dashboard.visible { display: flex; }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+
+  /* Card de status do dispositivo */
+  #device-card {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 20px;
+    align-items: center;
+  }
+  @media (max-width: 560px) {
+    #device-card { grid-template-columns: 1fr; }
+  }
+  .device-glyph {
+    width: 52px; height: 52px;
+    border-radius: 12px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+  }
+  #device-name { margin: 0 0 4px; font-size: 17px; font-weight: 700; }
+  #device-meta {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  #device-meta .sep { color: var(--text-faint); margin: 0 6px; }
+  #device-conn-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--stable);
+    background: var(--stable-soft);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+  #device-conn-type .dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--stable);
+  }
+
+  /* Botão desconectar dentro do card */
+  #btn-disconnect { padding: 10px 16px; font-size: 13px; }
+
+  /* Grid dos dois cards inferiores */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 620px) {
+    .stat-grid { grid-template-columns: 1fr; }
+  }
+
+  .card-label {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-weight: 700;
+    margin: 0 0 16px;
+  }
+
+  /* Card de bateria */
+  #battery-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  #battery-percentage {
+    font-family: var(--mono);
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  #battery-charging-badge {
+    display: none;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--signal);
+    background: var(--signal-soft);
+    padding: 3px 8px;
+    border-radius: 20px;
+  }
+  #battery-charging-badge.visible { display: inline-flex; }
+  #battery-bar-track {
+    height: 8px;
+    border-radius: 20px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  #battery-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 20px;
+    background: linear-gradient(90deg, var(--stable), #7ee8dc);
+    transition: width 0.5s ease;
+  }
+  #battery-bar-fill.low { background: linear-gradient(90deg, var(--danger), #ff8a8a); }
+
+  /* Card de estágio de DPI */
+  #dpi-stage-label {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+  }
+  #dpi-stage-label b { color: var(--text); }
+  #dpi-dots {
+    display: flex;
+    gap: 8px;
+  }
+  .dpi-dot {
+    flex: 1;
+    height: 40px;
+    border-radius: 8px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-faint);
+    transition: all 0.25s ease;
+  }
+  .dpi-dot.active {
+    background: var(--signal-soft);
+    border-color: var(--signal);
+    color: var(--signal);
+    font-weight: 700;
+    transform: translateY(-2px);
+  }
+
+  /* Aviso amigável (não é um log — é uma mensagem só) */
+  #notice {
+    display: none;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--danger-soft);
+    border: 1px solid rgba(255, 93, 93, 0.3);
+    color: #ffb3b3;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  #notice.visible { display: flex; }
+
+  footer {
+    margin-top: 48px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-faint);
+    font-family: var(--mono);
+  }
+  footer a { color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <header>
+    <div class="brand">
+      <div class="brand-mark">dm</div>
+      <div>
+        <h1>driverless-mouse</h1>
+        <p>configuração de mouse gamer sem drivers</p>
+      </div>
+    </div>
+    <button id="btn-disconnect-header" class="ghost" style="display:none;">Desconectar</button>
+  </header>
+
+  <div id="notice"></div>
+
+  <div id="empty-panel">
+    <div class="icon">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffb000" stroke-width="1.8">
+        <rect x="6" y="2" width="12" height="20" rx="6" />
+        <line x1="12" y1="2" x2="12" y2="10" />
+      </svg>
+    </div>
+    <h2>Nenhum mouse conectado</h2>
+    <p>Conecte seu Attack Shark V3 ou Logitech G502 X via USB e clique abaixo para
+       configurá-lo direto pelo navegador — sem instalar nenhum software.</p>
+    <button id="btn-connect" class="primary">Conectar Mouse</button>
+  </div>
+
+  <div id="dashboard">
+    <div class="card" id="device-card">
+      <div class="device-glyph">🖱️</div>
+      <div>
+        <p id="device-name">—</p>
+        <p id="device-meta">
+          <span id="device-vid">VID —</span><span class="sep">·</span><span id="device-pid">PID —</span>
+        </p>
+        <span id="device-conn-type"><span class="dot"></span><span id="device-conn-type-text">—</span></span>
+      </div>
+      <button id="btn-disconnect">Desconectar</button>
+    </div>
+
+    <div class="stat-grid">
+      <div class="card">
+        <p class="card-label">Bateria</p>
+        <div id="battery-value-row">
+          <span id="battery-percentage">—</span>
+          <span id="battery-charging-badge">⚡ carregando</span>
+        </div>
+        <div id="battery-bar-track"><div id="battery-bar-fill"></div></div>
+      </div>
+
+      <div class="card">
+        <p class="card-label">Estágio de DPI</p>
+        <p id="dpi-stage-label">Aguardando leitura — <b>troque o DPI no mouse</b> para detectar</p>
+        <div id="dpi-dots"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/Pointzinho/driverless-mouse" target="_blank" rel="noopener">github.com/Pointzinho/driverless-mouse</a>
+  </footer>
+</div>
+
+<script type="module">
+  import { MouseController } from "./hid-controller.js";
+
+  const els = {
+    emptyPanel: document.getElementById("empty-panel"),
+    dashboard: document.getElementById("dashboard"),
+    notice: document.getElementById("notice"),
+    btnConnect: document.getElementById("btn-connect"),
+    btnDisconnect: document.getElementById("btn-disconnect"),
+    btnDisconnectHeader: document.getElementById("btn-disconnect-header"),
+    deviceName: document.getElementById("device-name"),
+    deviceVid: document.getElementById("device-vid"),
+    devicePid: document.getElementById("device-pid"),
+    connTypeText: document.getElementById("device-conn-type-text"),
+    batteryPct: document.getElementById("battery-percentage"),
+    batteryBadge: document.getElementById("battery-charging-badge"),
+    batteryFill: document.getElementById("battery-bar-fill"),
+    dpiStageLabel: document.getElementById("dpi-stage-label"),
+    dpiDots: document.getElementById("dpi-dots"),
+  };
+
+  const DPI_STAGE_COUNT = 5;
+  els.dpiDots.innerHTML = Array.from({ length: DPI_STAGE_COUNT })
+    .map((_, i) => `<div class="dpi-dot" data-stage="${i}">${i + 1}</div>`)
+    .join("");
+  const dpiDotEls = Array.from(els.dpiDots.querySelectorAll(".dpi-dot"));
+
+  const controller = new MouseController();
+
+  function showNotice(message) {
+    els.notice.textContent = message;
+    els.notice.classList.add("visible");
+  }
+  function hideNotice() {
+    els.notice.classList.remove("visible");
+  }
+
+  function hex4(n) {
+    return "0x" + n.toString(16).padStart(4, "0");
+  }
+
+  controller.onConnect = (info) => {
+    hideNotice();
+    els.emptyPanel.style.display = "none";
+    els.dashboard.classList.add("visible");
+    els.btnDisconnectHeader.style.display = "inline-flex";
+
+    els.deviceName.textContent = info.name;
+    els.deviceVid.textContent = "VID " + hex4(info.vid);
+    els.devicePid.textContent = "PID " + hex4(info.pid);
+    els.connTypeText.textContent = info.connectionType;
+
+    // Reseta indicadores até a primeira leitura real chegar
+    els.batteryPct.textContent = "—";
+    els.batteryFill.style.width = "0%";
+    els.batteryBadge.classList.remove("visible");
+    dpiDotEls.forEach((d) => d.classList.remove("active"));
+    els.dpiStageLabel.innerHTML = "Aguardando leitura — <b>troque o DPI no mouse</b> para detectar";
+  };
+
+  controller.onDisconnect = () => {
+    els.dashboard.classList.remove("visible");
+    els.emptyPanel.style.display = "block";
+    els.btnDisconnectHeader.style.display = "none";
+  };
+
+  controller.onDpiStageChange = (stage) => {
+    dpiDotEls.forEach((d) => d.classList.toggle("active", Number(d.dataset.stage) === stage));
+    els.dpiStageLabel.innerHTML = `Perfil ativo: <b>Estágio ${stage + 1} de ${DPI_STAGE_COUNT}</b>`;
+  };
+
+  controller.onBatteryUpdate = (percentage, isCharging) => {
+    els.batteryPct.textContent = `${percentage}%`;
+    els.batteryFill.style.width = `${Math.max(0, Math.min(100, percentage))}%`;
+    els.batteryFill.classList.toggle("low", percentage <= 15 && !isCharging);
+    els.batteryBadge.classList.toggle("visible", !!isCharging);
+  };
+
+  controller.onError = (message) => {
+    showNotice(message);
+  };
+
+  async function handleConnectClick() {
+    els.btnConnect.disabled = true;
+    await controller.connect();
+    els.btnConnect.disabled = false;
+  }
+
+  async function handleDisconnectClick() {
+    await controller.disconnect();
+  }
+
+  els.btnConnect.addEventListener("click", handleConnectClick);
+  els.btnDisconnect.addEventListener("click", handleDisconnectClick);
+  els.btnDisconnectHeader.addEventListener("click", handleDisconnectClick);
+
+  if (!MouseController.isSupported()) {
+    showNotice("Este navegador não suporta WebHID. Abra este site no Chrome ou Edge desktop.");
+    els.btnConnect.disabled = true;
+  }
+</script>
+
+</body>
+</html>

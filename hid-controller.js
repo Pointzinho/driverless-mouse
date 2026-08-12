@@ -1,429 +1,401 @@
 /* =========================================================================
    driverless-mouse — hid-controller.js
-   Módulo WebHID para leitura/escrita de configurações em mouses gamer
-   (Attack Shark V3 e Logitech série G) direto do navegador, sem drivers.
+   Motor de controle WebHID para a fase final do projeto.
 
-   COMO USAR:
-   Cole este bloco dentro de <script> no seu index.html, ou importe como
-   módulo (<script type="module" src="hid-controller.js">).
+   Consolida os resultados da engenharia reversa feita com o
+   hid-diagnostic.html para dois dispositivos:
 
-   IMPORTANTE — LEIA ANTES DE USAR:
-   Os VID/PID e os offsets de byte marcados como "TODO / DESCOBRIR" são
-   PLACEHOLDERS. A Attack Shark e a Logitech não publicam a especificação
-   do protocolo HID de configuração (DPI, polling rate, etc). Isso precisa
-   ser descoberto por engenharia reversa. A função `logRawReport()` no
-   final deste arquivo foi feita exatamente pra te ajudar a descobrir esses
-   valores rapidamente — veja as instruções no rodapé.
+     • Attack Shark V3   (VID 0x1d57 · PID 0xfa60 dongle / 0x215a cabo)
+     • Logitech G502 X   (VID 0x046d · PID 0xc098, protocolo HID++ 2.0)
+
+   Uso (ES module):
+     import { MouseController } from "./hid-controller.js";
+     const controller = new MouseController();
+     controller.onConnect = (info) => ...
+     controller.onDpiStageChange = (stage) => ...
+     controller.onBatteryUpdate = (percentage, isCharging) => ...
+     controller.onError = (message) => ...
+     await controller.connect();
    ========================================================================= */
 
 // -----------------------------------------------------------------------
-// 1. REGISTRO DE PERFIS DE DISPOSITIVO
-//    Cada perfil descreve como conversar com um mouse específico.
-//    Preencha vendorId/productId reais (obtidos via navigator.hid.requestDevice)
-//    e os offsets de byte reais (descobertos via logRawReport).
+// Constantes HID++ 2.0 (Logitech)
+// Estrutura confirmada via Logitech/cpg-docs e validada empiricamente
+// no hid-diagnostic.html: [devIdx, featureIdx, (func<<4|swId), p0, p1, p2]
 // -----------------------------------------------------------------------
+const HIDPP_SHORT_REPORT_ID = 0x10;
+const HIDPP_LONG_REPORT_ID = 0x11;
+const HIDPP_SOFTWARE_ID = 0x01;
 
-const DEVICE_PROFILES = {
-  ATTACK_SHARK_V3: {
-    label: "Attack Shark V3",
-    vendorId: 0x0000,   // TODO / DESCOBRIR: rode requestDevice() e leia device.vendorId
-    productId: 0x0000,  // TODO / DESCOBRIR: idem, device.productId
+function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
+  const p = [0, 0, 0];
+  (params || []).forEach((v, i) => { if (i < 3) p[i] = v & 0xff; });
+  const funcByte = ((functionId & 0x0f) << 4) | (HIDPP_SOFTWARE_ID & 0x0f);
+  return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
+}
 
-    // A maioria dos mouses gamer baratos (chips BK52xx, como o V3 usa)
-    // conversa via Feature Report em vez de Output Report simples.
-    // Ajuste reportType conforme o que você observar em logRawReport().
-    reportType: "feature", // "feature" | "output"
-    reportId: 0x05,         // TODO / DESCOBRIR
-
-    // Mapas de DPI/Hz -> valor de byte a enviar. Preencha depois de capturar
-    // o tráfego do software oficial (ou botões físicos) trocando cada valor.
-    dpiMap: {
-      400: 0x00,
-      800: 0x01,
-      1600: 0x02,
-      3200: 0x03,
-      6400: 0x04,
-    },
-    pollingRateMap: {
-      125: 0x00,
-      500: 0x01,
-      1000: 0x02,
-    },
-
-    // Monta o payload de bytes para trocar o DPI. TODO: ajustar layout real.
-    buildDpiPacket(dpiValueByte) {
-      const packet = new Uint8Array(8);
-      packet[0] = 0x04;          // TODO: comando "set DPI" (placeholder)
-      packet[1] = dpiValueByte;
-      return packet;
-    },
-
-    buildPollingRatePacket(hzValueByte) {
-      const packet = new Uint8Array(8);
-      packet[0] = 0x06;          // TODO: comando "set polling rate" (placeholder)
-      packet[1] = hzValueByte;
-      return packet;
-    },
-
-    // Interpreta um inputreport recebido do mouse (bateria, perfil ativo).
-    // TODO: ajustar offsets reais depois de inspecionar os bytes crus.
-    parseInputReport(dataView) {
-      return {
-        battery: dataView.byteLength > 2 ? dataView.getUint8(2) : null, // placeholder
-        activeProfile: dataView.byteLength > 3 ? dataView.getUint8(3) : null, // placeholder
-      };
-    },
+// -----------------------------------------------------------------------
+// Perfil: Attack Shark V3
+//
+// Achado da engenharia reversa: o firmware NÃO envia inputreport
+// espontâneo para mudanças de DPI. É preciso sondar ativamente os
+// Feature Reports (0x01–0x20) via receiveFeatureReport().
+//
+// O QUE AINDA FALTA (marcado abaixo): qual desses IDs, e em qual byte,
+// carrega o valor de DPI. O hid-diagnostic.html já te dá a ferramenta
+// certa pra descobrir isso (painel de Probe) — quando você identificar,
+// preencha `dpiReportId` e `dpiByteOffset` e o resto do motor já funciona
+// sem mudanças (o polling e a emissão de eventos já estão prontos).
+// -----------------------------------------------------------------------
+const ATTACK_SHARK_V3 = {
+  id: "attack-shark-v3",
+  label: "Attack Shark V3",
+  vendorId: 0x1d57,
+  productIds: {
+    0xfa60: "Dongle 2.4GHz",
+    0x215a: "Cabo USB",
   },
 
-  LOGITECH_G: {
-    label: "Logitech (Série G)",
-    vendorId: 0x046d, // confirmado pelo usuário
-    productId: 0x0000, // TODO / DESCOBRIR: varia por modelo exato (G102, G Pro, G502, etc)
+  // TODO / DESCOBRIR — preencha com o resultado do Probe no hid-diagnostic.html
+  dpiReportId: null,   // ex: 0x05
+  dpiByteOffset: null, // ex: 2
 
-    // Mouses Logitech modernos usam o protocolo HID++ 2.0 sobre feature reports.
-    // Implementar HID++ completo exige mapear "features" por índice (0x00 root,
-    // 0x2201 Adjustable DPI, 0x8060 Reportrate, etc). Isso é bem mais estruturado
-    // que um protocolo genérico — deixei os hooks prontos abaixo.
-    reportType: "feature",
-    reportId: 0x11, // Long report HID++ 2.0 (0x10 = short, 0x11 = long) — comum, mas confirme
+  pollIntervalMs: 400, // frequência da sondagem ativa de feature reports
 
-    // HID++: índice de feature descoberto via "root.getFeature()" (0x0000).
-    // TODO / DESCOBRIR: os índices reais mudam por firmware/modelo.
-    features: {
-      ADJUSTABLE_DPI: 0x00, // placeholder — precisa consultar o featureset do device
-      REPORT_RATE: 0x00,    // placeholder
-      BATTERY: 0x00,        // placeholder
-    },
+  connectionType(productId) {
+    return this.productIds[productId] || "Desconhecido";
+  },
 
-    dpiMap: {
-      400: 0x0190,
-      800: 0x0320,
-      1600: 0x0640,
-      3200: 0x0C80,
-      6400: 0x1900,
-    },
-    pollingRateMap: {
-      125: 0x08,
-      500: 0x02,
-      1000: 0x01,
-    },
+  /** Chamado uma vez logo após a conexão ser aberta. */
+  async init(controller) {
+    controller._startAttackSharkPolling();
+  },
 
-    buildDpiPacket(dpiValue16) {
-      // Estrutura típica de um pacote HID++ 2.0 longo (20 bytes):
-      // [reportId, deviceIndex, featureIndex, funcId|swId, params...]
-      const packet = new Uint8Array(20);
-      packet[0] = 0x11;                 // reportId longo
-      packet[1] = 0xff;                 // deviceIndex (0xff = wired/receptor direto)
-      packet[2] = this.features.ADJUSTABLE_DPI; // TODO: índice real da feature
-      packet[3] = 0x30;                 // TODO: funcId "setDPI" (placeholder)
-      packet[4] = 0x00;                 // sensor index (geralmente 0)
-      packet[5] = (dpiValue16 >> 8) & 0xff;
-      packet[6] = dpiValue16 & 0xff;
-      return packet;
-    },
+  /**
+   * Sonda um único Feature Report e repassa para o controller processar.
+   * Usado pelo poller genérico em MouseController.
+   */
+  async pollStep(controller, reportId) {
+    try {
+      const view = await controller.device.receiveFeatureReport(reportId);
+      const bytes = Array.from(new Uint8Array(view.buffer));
+      controller._handleAttackSharkFeatureReport(reportId, bytes);
+    } catch (_err) {
+      // Report ID não suportado nesse índice — esperado para a maioria, ignora.
+    }
+  },
 
-    buildPollingRatePacket(hzByte) {
-      const packet = new Uint8Array(20);
-      packet[0] = 0x11;
-      packet[1] = 0xff;
-      packet[2] = this.features.REPORT_RATE; // TODO: índice real
-      packet[3] = 0x30;                       // TODO: funcId real
-      packet[4] = hzByte;
-      return packet;
-    },
-
-    parseInputReport(dataView) {
-      return {
-        battery: dataView.byteLength > 4 ? dataView.getUint8(4) : null, // placeholder
-        activeProfile: null, // Logitech G geralmente não expõe "perfil" via HID++ básico
-      };
-    },
+  /** Interpreta um relatório já confirmado como o de DPI (quando mapeado). */
+  parseDpiStage(bytes) {
+    if (this.dpiByteOffset === null || bytes.length <= this.dpiByteOffset) return null;
+    return bytes[this.dpiByteOffset];
   },
 };
 
 // -----------------------------------------------------------------------
-// 2. CONTROLADOR PRINCIPAL
+// Perfil: Logitech G502 X LIGHTSPEED (HID++ 2.0)
+//
+// Dados confirmados via engenharia reversa:
+//   - Handshake: Ping ao Root (feature idx 0, função 1, params [0,0,0x5a])
+//     "acorda" o dispositivo e o faz começar a notificar espontaneamente.
+//   - DPI: após o handshake, o mouse envia notificações espontâneas no
+//     Report ID 0x11 (longo). Feature idx 0x09 (observado na captura),
+//     função 1 (evento), byte de parâmetro 0 (índice 3 do payload) = estágio
+//     de DPI atual (0–4, os 5 perfis onboard).
+//   - Bateria: feature Unified Battery (0x1004) resolvida no índice 0x06.
+//     GetStatus (função 0x00) devolve [percentual, status de carga, ...]
+//     nos bytes de parâmetro da resposta.
+// -----------------------------------------------------------------------
+const LOGITECH_G502X = {
+  id: "logitech-g502x",
+  label: "Logitech G502 X LIGHTSPEED",
+  vendorId: 0x046d,
+  productIds: {
+    0xc098: "Cabo USB",
+    0xc547: "Sem fio / Dongle LIGHTSPEED",
+  },
+
+  // Aceitos como Device Index válido em respostas/notificações HID++.
+  // 0xff = mouse falando direto (cabo) · 0x01 = mouse pareado no dongle (slot 1).
+  knownDeviceIndexes: [0xff, 0x01],
+
+  batteryFeatureIndex: 0x06,
+  dpiEventFeatureIndex: 0x09, // observado empiricamente na captura de eventos de DPI
+  dpiStageCount: 5,
+
+  batteryPollIntervalMs: 30000, // bateria não é espontânea, precisa ser sondada
+
+  connectionType(productId) {
+    return this.productIds[productId] || "Sem fio";
+  },
+
+  /**
+   * Resolve o Device Index a usar nos comandos de saída (Ping, GetStatus...).
+   * Cabo (0xc098) fala direto com o mouse -> 0xff.
+   * Dongle (0xc547) enderaça o mouse pareado no slot 1 do receptor -> 0x01.
+   */
+  resolveDeviceIndex(productId) {
+    return productId === 0xc547 ? 0x01 : 0xff;
+  },
+
+  async init(controller) {
+    controller.deviceIndex = this.resolveDeviceIndex(controller.device.productId);
+    await controller._logitechPing();
+    await new Promise((r) => setTimeout(r, 150));
+    await controller._logitechRequestBattery(); // primeira leitura imediata
+    controller._startLogitechBatteryPolling();
+  },
+
+  /** Trata um inputreport HID++ já roteado pelo controller. */
+  handleInputReport(controller, reportId, bytes) {
+    const deviceIndexOk = this.knownDeviceIndexes.includes(bytes[0]);
+
+    // Notificação espontânea de troca de estágio de DPI.
+    if (
+      deviceIndexOk &&
+      reportId === HIDPP_LONG_REPORT_ID &&
+      bytes[1] === this.dpiEventFeatureIndex &&
+      bytes.length > 3
+    ) {
+      const stage = bytes[3];
+      if (stage >= 0 && stage < this.dpiStageCount) {
+        controller._emitDpiStage(stage);
+        return;
+      }
+    }
+
+    // Resposta ao pedido de bateria (feature idx 0x06, GetStatus).
+    if (
+      deviceIndexOk &&
+      (reportId === HIDPP_SHORT_REPORT_ID || reportId === HIDPP_LONG_REPORT_ID) &&
+      bytes[1] === this.batteryFeatureIndex
+    ) {
+      // Layout best-effort baseado no padrão comum de Unified Battery
+      // (0x1004): byte0 = percentual, byte1 = estado de carga.
+      // Se os números vierem estranhos no seu firmware, confirme os
+      // offsets exatos com o console customizado do hid-diagnostic.html.
+      const percentage = bytes[3];
+      const chargingStatus = bytes[4];
+      const isCharging = chargingStatus === 1 || chargingStatus === 2;
+      if (percentage >= 0 && percentage <= 100) {
+        controller._emitBattery(percentage, isCharging);
+      }
+    }
+  },
+};
+
+const DEVICE_PROFILES = [ATTACK_SHARK_V3, LOGITECH_G502X];
+
+// -----------------------------------------------------------------------
+// Controller principal
 // -----------------------------------------------------------------------
 
-class MouseHidController {
+export class MouseController {
   constructor() {
     /** @type {HIDDevice | null} */
     this.device = null;
-    /** @type {object | null} */
     this.profile = null;
-    this.onStatusUpdate = null; // callback opcional: (status) => void
+
+    this._pollTimer = null;
+    this._batteryTimer = null;
+    this._attackSharkReportCursor = 0x01;
+    this.deviceIndex = 0xff; // resolvido dinamicamente por perfil.init() (ex: Logitech via cabo/dongle)
+
+    // Callbacks públicos — a UI atribui essas propriedades.
+    this.onConnect = null;        // (info: {name, vid, pid, connectionType, profileId}) => void
+    this.onDisconnect = null;     // () => void
+    this.onDpiStageChange = null; // (stageIndex: number) => void
+    this.onBatteryUpdate = null;  // (percentage: number, isCharging: boolean) => void
+    this.onError = null;          // (message: string) => void
   }
 
-  /** Verifica se o navegador suporta WebHID */
   static isSupported() {
     return "hid" in navigator;
   }
 
-  /**
-   * Abre o seletor nativo do navegador e conecta ao mouse escolhido.
-   * Identifica automaticamente o perfil (Attack Shark ou Logitech) pelo VID.
-   */
   async connect() {
-    if (!MouseHidController.isSupported()) {
-      throw new Error(
-        "Este navegador não suporta WebHID. Use Chrome ou Edge atualizado."
-      );
+    if (!MouseController.isSupported()) {
+      this._error("Este navegador não suporta WebHID. Use Chrome ou Edge atualizado.");
+      return false;
     }
 
     try {
-      const filters = Object.values(DEVICE_PROFILES).map((p) => ({
-        vendorId: p.vendorId,
-      }));
-
+      const filters = DEVICE_PROFILES.map((p) => ({ vendorId: p.vendorId }));
       const [device] = await navigator.hid.requestDevice({ filters });
-
-      if (!device) {
-        throw new Error("Nenhum dispositivo selecionado.");
-      }
+      if (!device) return false;
 
       await device.open();
-
       this.device = device;
       this.profile = this._matchProfile(device);
 
-      // Escuta relatórios espontâneos do mouse (bateria, perfil, etc)
-      device.addEventListener("inputreport", (event) =>
-        this._handleInputReport(event)
-      );
+      device.addEventListener("inputreport", (event) => this._handleInputReport(event));
 
-      this._notify({
-        type: "connected",
-        deviceName: device.productName,
-        profile: this.profile?.label ?? "desconhecido (perfil não mapeado)",
-      });
-
-      return device;
-    } catch (err) {
-      this._handleConnectionError(err);
-      throw err;
-    }
-  }
-
-  _matchProfile(device) {
-    return (
-      Object.values(DEVICE_PROFILES).find(
-        (p) =>
-          p.vendorId === device.vendorId &&
-          (p.productId === 0x0000 || p.productId === device.productId)
-      ) ?? null
-    );
-  }
-
-  /** Trata erros comuns de conexão de forma amigável para o usuário final */
-  _handleConnectionError(err) {
-    let friendlyMessage;
-
-    if (err.name === "NotFoundError") {
-      friendlyMessage =
-        "Nenhum mouse foi selecionado, ou o navegador não encontrou dispositivos HID compatíveis.";
-    } else if (err.name === "SecurityError") {
-      friendlyMessage =
-        "O navegador bloqueou o acesso HID. Confirme que a página está em HTTPS (ou localhost).";
-    } else if (err.name === "InvalidStateError") {
-      friendlyMessage =
-        "O dispositivo já está aberto por outra aba ou processo.";
-    } else {
-      friendlyMessage = `Erro ao conectar: ${err.message}`;
-    }
-
-    this._notify({ type: "error", message: friendlyMessage, raw: err });
-  }
-
-  /**
-   * Envia um relatório para o dispositivo, com fallback entre
-   * sendFeatureReport e sendReport conforme o perfil, e tratamento de erro
-   * amigável caso a interface esteja ocupada/recuse o pacote.
-   */
-  async _send(packet) {
-    if (!this.device || !this.device.opened) {
-      this._notify({
-        type: "error",
-        message: "Nenhum mouse conectado. Conecte o dispositivo antes de enviar comandos.",
-      });
-      return false;
-    }
-    if (!this.profile) {
-      this._notify({
-        type: "error",
-        message:
-          "Dispositivo conectado, mas o protocolo dele ainda não está mapeado em DEVICE_PROFILES.",
-      });
-      return false;
-    }
-
-    const reportId = this.profile.reportId ?? 0x00;
-
-    try {
-      if (this.profile.reportType === "feature") {
-        await this.device.sendFeatureReport(reportId, packet);
-      } else {
-        await this.device.sendReport(reportId, packet);
+      if (!this.profile) {
+        this._error(
+          `Dispositivo "${device.productName}" conectado, mas não reconhecido pelos perfis mapeados (VID 0x${device.vendorId.toString(16)}, PID 0x${device.productId.toString(16)}).`
+        );
+        return true; // conexão abriu, só não tem perfil — a UI decide o que mostrar
       }
+
+      if (typeof this.onConnect === "function") {
+        this.onConnect({
+          name: device.productName || this.profile.label,
+          vid: device.vendorId,
+          pid: device.productId,
+          connectionType: this.profile.connectionType(device.productId),
+          profileId: this.profile.id,
+        });
+      }
+
+      await this.profile.init(this);
       return true;
     } catch (err) {
-      // Caso mais comum na prática: a interface HID está "ocupada" porque
-      // o software oficial do fabricante também está rodando e segurando
-      // o dispositivo, ou o SO recusou a escrita.
-      let friendlyMessage;
-      if (err.name === "InvalidStateError") {
-        friendlyMessage =
-          "O mouse recusou o comando: a interface parece estar ocupada. Feche o software oficial do fabricante (se estiver aberto) e tente novamente.";
-      } else if (err.name === "NetworkError") {
-        friendlyMessage =
-          "Falha de comunicação com o dispositivo. Desconecte e reconecte o mouse (USB) e tente de novo.";
-      } else {
-        friendlyMessage = `Falha ao enviar comando para o mouse: ${err.message}`;
-      }
-
-      this._notify({ type: "error", message: friendlyMessage, raw: err });
+      this._handleConnectionError(err);
       return false;
-    }
-  }
-
-  /** Define o DPI do mouse conectado (ex: 400, 800, 1600, 3200, 6400) */
-  async setDpi(dpiValue) {
-    if (!this.profile) return false;
-    const mapped = this.profile.dpiMap[dpiValue];
-    if (mapped === undefined) {
-      this._notify({
-        type: "error",
-        message: `DPI ${dpiValue} não é suportado neste perfil.`,
-      });
-      return false;
-    }
-    const packet = this.profile.buildDpiPacket(mapped);
-    const ok = await this._send(packet);
-    if (ok) this._notify({ type: "dpi-changed", value: dpiValue });
-    return ok;
-  }
-
-  /** Define a taxa de polling do mouse conectado (ex: 125, 500, 1000 Hz) */
-  async setPollingRate(hz) {
-    if (!this.profile) return false;
-    const mapped = this.profile.pollingRateMap[hz];
-    if (mapped === undefined) {
-      this._notify({
-        type: "error",
-        message: `Polling rate ${hz}Hz não é suportado neste perfil.`,
-      });
-      return false;
-    }
-    const packet = this.profile.buildPollingRatePacket(mapped);
-    const ok = await this._send(packet);
-    if (ok) this._notify({ type: "polling-rate-changed", value: hz });
-    return ok;
-  }
-
-  /** Handler chamado automaticamente quando o mouse manda um inputreport */
-  _handleInputReport(event) {
-    if (!this.profile) {
-      // Perfil ainda não mapeado: apenas repassa os dados crus.
-      this._notify({
-        type: "raw-input-report",
-        reportId: event.reportId,
-        data: new Uint8Array(event.data.buffer),
-      });
-      return;
-    }
-
-    const parsed = this.profile.parseInputReport(event.data);
-    this._notify({ type: "state-update", ...parsed });
-  }
-
-  _notify(status) {
-    if (typeof this.onStatusUpdate === "function") {
-      this.onStatusUpdate(status);
-    } else {
-      console.log("[driverless-mouse]", status);
     }
   }
 
   async disconnect() {
+    this._stopAttackSharkPolling();
+    this._stopLogitechBatteryPolling();
     if (this.device) {
-      await this.device.close();
-      this._notify({ type: "disconnected" });
-      this.device = null;
-      this.profile = null;
+      try { await this.device.close(); } catch (_) {}
+    }
+    this.device = null;
+    this.profile = null;
+    if (typeof this.onDisconnect === "function") this.onDisconnect();
+  }
+
+  _matchProfile(device) {
+    return (
+      DEVICE_PROFILES.find(
+        (p) => p.vendorId === device.vendorId && device.productId in p.productIds
+      ) ?? null
+    );
+  }
+
+  _handleConnectionError(err) {
+    let msg;
+    if (err.name === "NotFoundError") {
+      msg = "Nenhum mouse foi selecionado.";
+    } else if (err.name === "SecurityError") {
+      msg = "Acesso HID bloqueado pelo navegador. Confirme que a página está em HTTPS ou localhost.";
+    } else if (err.name === "InvalidStateError") {
+      msg = "O dispositivo já está aberto por outra aba/processo.";
+    } else {
+      msg = `Erro ao conectar: ${err.message}`;
+    }
+    this._error(msg);
+  }
+
+  _error(message) {
+    if (typeof this.onError === "function") this.onError(message);
+    else console.warn("[driverless-mouse]", message);
+  }
+
+  _emitDpiStage(stage) {
+    if (typeof this.onDpiStageChange === "function") this.onDpiStageChange(stage);
+  }
+
+  _emitBattery(percentage, isCharging) {
+    if (typeof this.onBatteryUpdate === "function") this.onBatteryUpdate(percentage, isCharging);
+  }
+
+  // ---------------------------------------------------------------------
+  // Roteamento de inputreport para o perfil ativo
+  // ---------------------------------------------------------------------
+
+  _handleInputReport(event) {
+    if (!this.profile) return;
+    const bytes = Array.from(new Uint8Array(event.data.buffer));
+
+    if (this.profile.id === "logitech-g502x") {
+      this.profile.handleInputReport(this, event.reportId, bytes);
+    }
+    // Attack Shark não usa inputreport espontâneo — tratado via polling (abaixo).
+  }
+
+  // ---------------------------------------------------------------------
+  // Attack Shark V3 — sondagem ativa de Feature Reports
+  // ---------------------------------------------------------------------
+
+  _startAttackSharkPolling() {
+    this._stopAttackSharkPolling();
+    this._attackSharkReportCursor = 0x01;
+
+    this._pollTimer = setInterval(async () => {
+      if (!this.device || !this.profile) return;
+
+      // Percorre 0x01–0x20 continuamente, um ID por tick, para não
+      // sobrecarregar o barramento com 32 requisições simultâneas.
+      const reportId = this._attackSharkReportCursor;
+      await this.profile.pollStep(this, reportId);
+
+      this._attackSharkReportCursor += 1;
+      if (this._attackSharkReportCursor > 0x20) this._attackSharkReportCursor = 0x01;
+    }, this.profile.pollIntervalMs);
+  }
+
+  _stopAttackSharkPolling() {
+    if (this._pollTimer) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
+  }
+
+  _handleAttackSharkFeatureReport(reportId, bytes) {
+    if (this.profile.dpiReportId === null || reportId !== this.profile.dpiReportId) return;
+    const stage = this.profile.parseDpiStage(bytes);
+    if (stage !== null) this._emitDpiStage(stage);
+  }
+
+  // ---------------------------------------------------------------------
+  // Logitech G502 X — HID++ 2.0
+  // ---------------------------------------------------------------------
+
+  async _sendHidppShort(featureIndex, functionId, params, label) {
+    if (!this.device) return false;
+    const data = buildHidppShortPacket(this.deviceIndex, featureIndex, functionId, params);
+    try {
+      await this.device.sendReport(HIDPP_SHORT_REPORT_ID, data);
+      return true;
+    } catch (err) {
+      const msg =
+        err.name === "InvalidStateError"
+          ? `Falha ao enviar "${label}": interface ocupada. Feche o Logitech G HUB e tente novamente.`
+          : `Falha ao enviar "${label}": ${err.message}`;
+      this._error(msg);
+      return false;
+    }
+  }
+
+  async _logitechPing() {
+    await this._sendHidppShort(0x00, 0x01, [0x00, 0x00, 0x5a], "Ping (GetProtocolVersion)");
+  }
+
+  async _logitechRequestBattery() {
+    await this._sendHidppShort(
+      this.profile.batteryFeatureIndex,
+      0x00,
+      [0x00, 0x00, 0x00],
+      "GetStatus (Unified Battery)"
+    );
+  }
+
+  _startLogitechBatteryPolling() {
+    this._stopLogitechBatteryPolling();
+    this._batteryTimer = setInterval(() => {
+      if (!this.device) return;
+      this._logitechRequestBattery();
+    }, this.profile.batteryPollIntervalMs);
+  }
+
+  _stopLogitechBatteryPolling() {
+    if (this._batteryTimer) {
+      clearInterval(this._batteryTimer);
+      this._batteryTimer = null;
     }
   }
 }
 
-// -----------------------------------------------------------------------
-// 3. FERRAMENTA DE ENGENHARIA REVERSA — logRawReport()
-//
-//    Como usar para descobrir o protocolo real de um mouse:
-//    1. Chame `startRawLogging()` no console do navegador após conectar.
-//    2. Abra o software OFICIAL do fabricante (ou aperte o botão físico
-//       de DPI/polling no próprio mouse, se ele tiver).
-//    3. Mude o DPI de 400 -> 800 -> 1600, etc, um valor por vez.
-//    4. Observe no console os bytes que aparecem: o byte que muda de
-//       forma previsível junto com o DPI é o offset que você quer.
-//    5. Repita para polling rate e para o estado inicial (bateria/perfil).
-//    Isso substitui os placeholders acima por valores reais.
-// -----------------------------------------------------------------------
-
-function startRawLogging(device) {
-  if (!device) {
-    console.warn("Passe uma instância de HIDDevice já aberta/conectada.");
-    return;
-  }
-  device.addEventListener("inputreport", (event) => {
-    const bytes = Array.from(new Uint8Array(event.data.buffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join(" ");
-    console.log(
-      `[RAW inputreport] reportId=0x${event.reportId
-        .toString(16)
-        .padStart(2, "0")} bytes: ${bytes}`
-    );
-  });
-  console.log(
-    "Logging ativado. Abra o software oficial do mouse e mude DPI/polling para ver os bytes."
-  );
-}
-
-// -----------------------------------------------------------------------
-// 4. EXEMPLO DE USO (adapte aos IDs do seu HTML)
-// -----------------------------------------------------------------------
-/*
-const controller = new MouseHidController();
-
-controller.onStatusUpdate = (status) => {
-  switch (status.type) {
-    case "connected":
-      console.log(`Conectado: ${status.deviceName} (${status.profile})`);
-      break;
-    case "state-update":
-      console.log(`Bateria: ${status.battery}% | Perfil ativo: ${status.activeProfile}`);
-      break;
-    case "error":
-      alert(status.message); // ou renderize num toast/banner na sua UI
-      break;
-    default:
-      console.log(status);
-  }
-};
-
-document.getElementById("btn-connect").addEventListener("click", async () => {
-  try {
-    await controller.connect();
-  } catch {
-    // erro já tratado e notificado via onStatusUpdate
-  }
-});
-
-document.getElementById("dpi-select").addEventListener("change", (e) => {
-  controller.setDpi(Number(e.target.value));
-});
-
-document.getElementById("polling-select").addEventListener("change", (e) => {
-  controller.setPollingRate(Number(e.target.value));
-});
-*/
-
-export { MouseHidController, DEVICE_PROFILES, startRawLogging };
+export { DEVICE_PROFILES, ATTACK_SHARK_V3, LOGITECH_G502X };
