@@ -14,9 +14,9 @@
     --line: #1e2b31;
     --text: #c9d6da;
     --text-dim: #5f7680;
-    --signal: #ffb000;
+    --signal: #ffb000;      /* âmbar de fósforo — byte que mudou */
     --signal-dim: #6b4c00;
-    --stable: #4fd1c5;
+    --stable: #4fd1c5;      /* teal — byte estável, presente */
     --danger: #ff5d5d;
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
@@ -77,7 +77,7 @@
 
   main {
     display: grid;
-    grid-template-columns: 340px 1fr;
+    grid-template-columns: 360px 1fr;
     gap: 1px;
     background: var(--line);
   }
@@ -86,6 +86,7 @@
   }
 
   section { background: var(--bg); }
+  #left-col { max-height: 100vh; overflow-y: auto; }
 
   .panel-title {
     padding: 12px 16px;
@@ -96,6 +97,7 @@
     border-bottom: 1px solid var(--line);
   }
 
+  /* ---- Coluna esquerda: controles + grade de bytes ---- */
   #controls { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 
   button {
@@ -111,8 +113,10 @@
   }
   button:hover:not(:disabled) { border-color: var(--signal); color: #fff; }
   button:disabled { opacity: 0.35; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
   button.primary { border-color: var(--signal); color: var(--signal); }
   button.primary:hover:not(:disabled) { background: var(--signal); color: #0a0f12; }
+  button.active { border-color: var(--danger); color: var(--danger); }
 
   #device-info {
     font-size: 12px;
@@ -127,6 +131,15 @@
   }
   #device-info b { color: var(--text); }
   #device-info.visible { display: flex; }
+  #device-info .badge {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--signal);
+    border: 1px solid var(--signal-dim);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
 
   #report-filter-wrap { display: flex; flex-direction: column; gap: 6px; }
   #report-filter-wrap label { font-size: 11px; color: var(--text-dim); }
@@ -140,21 +153,7 @@
     border-radius: 4px;
   }
 
-  /* ---- Sondagem manual (probe / poll) ---- */
-  #probe-panel {
-    display: none;
-    flex-direction: column;
-    gap: 10px;
-    padding-top: 10px;
-    border-top: 1px solid var(--line);
-  }
-  #probe-panel.visible { display: flex; }
-  #probe-panel .hint {
-    font-size: 11px;
-    color: var(--text-dim);
-    line-height: 1.4;
-  }
-
+  /* Grade de bytes — o elemento assinatura da página */
   #byte-grid {
     display: grid;
     grid-template-columns: repeat(8, 1fr);
@@ -207,6 +206,39 @@
   #grid-legend .i-stable { background: var(--stable); }
   #grid-legend .i-changed { background: var(--signal); }
 
+  /* ---- Sondagem manual (probe / poll / HID++) ---- */
+  .sub-panel {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-top: 1px solid var(--line);
+  }
+  .sub-panel .hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+  .field-row { display: flex; gap: 8px; align-items: center; }
+  .field-row label { font-size: 11px; color: var(--text-dim); white-space: nowrap; flex: 1; }
+  .hex-input {
+    font-family: var(--mono);
+    font-size: 12px;
+    width: 56px;
+    background: var(--bg-panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 7px 8px;
+    text-align: center;
+  }
+  #probe-progress, #hidpp-progress {
+    font-size: 11px;
+    color: var(--text-dim);
+    min-height: 14px;
+  }
+
+  /* ---- Coluna direita: log bruto ---- */
   #log-header {
     display: flex;
     align-items: center;
@@ -218,25 +250,41 @@
   #log-actions button { padding: 6px 10px; font-size: 11px; }
 
   #log {
-    height: calc(100vh - 260px);
+    height: calc(100vh - 60px);
     min-height: 300px;
     overflow-y: auto;
     padding: 8px 0;
   }
   .log-row {
     display: grid;
-    grid-template-columns: 90px 60px 1fr;
-    gap: 12px;
+    grid-template-columns: 90px 55px 46px 1fr;
+    gap: 10px;
     padding: 5px 16px;
     border-bottom: 1px solid #10181c;
     align-items: baseline;
   }
   .log-row .ts { color: var(--text-dim); font-size: 11px; }
   .log-row .rid { color: var(--text-dim); font-size: 11px; }
+  .log-row .src {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    padding: 1px 4px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    text-align: center;
+  }
   .log-row .bytes { font-size: 12px; letter-spacing: 0.03em; word-break: break-all; }
   .log-row .bytes .b { padding: 0 1px; }
   .log-row .bytes .b.diff { color: var(--signal); font-weight: 700; }
-  .log-row.system { color: var(--signal); font-style: italic; display: block; padding: 10px 16px;}
+
+  .log-row.system {
+    grid-template-columns: 90px 1fr;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  .log-row.system .msg { grid-column: 2; }
 
   #empty-state {
     padding: 40px 24px;
@@ -262,8 +310,8 @@
 </header>
 
 <main>
-  <section>
-    <div class="panel-title">Controles</div>
+  <section id="left-col">
+    <div class="panel-title">Conexão</div>
     <div id="controls">
       <button id="btn-connect" class="primary">Conectar mouse</button>
       <button id="btn-disconnect" disabled>Desconectar</button>
@@ -271,6 +319,7 @@
       <div id="device-info">
         <div><b id="di-name">—</b></div>
         <div>VID: <span id="di-vid">—</span> · PID: <span id="di-pid">—</span></div>
+        <div id="di-vendor-badge" style="display:none;" class="badge">Logitech HID++ detectado</div>
       </div>
 
       <div id="report-filter-wrap">
@@ -281,13 +330,6 @@
       </div>
 
       <button id="btn-pause">Pausar captura</button>
-
-      <!-- Novo Painel de Sondagem adicionado -->
-      <div id="probe-panel">
-        <span class="hint">Se o mouse não enviar dados sozinho, clique abaixo para forçar a leitura da memória interna via Feature Reports.</span>
-        <button id="btn-probe">Sondar Feature Reports (Probe)</button>
-      </div>
-
     </div>
 
     <div class="panel-title">Grade de bytes (último relatório)</div>
@@ -295,6 +337,45 @@
     <div id="grid-legend">
       <span><i class="i-stable"></i> estável</span>
       <span><i class="i-changed"></i> mudou agora</span>
+    </div>
+
+    <div class="panel-title">Sondagem manual — Feature Reports</div>
+    <div class="sub-panel">
+      <p class="hint">
+        Para dispositivos que não disparam <code>inputreport</code> sozinhos (comum em mouses
+        baratos com firmware simples). Varre Report IDs de 0x01 a 0x20 via
+        <code>receiveFeatureReport()</code>.
+      </p>
+      <button id="btn-probe">Sondar Feature Reports (Probe)</button>
+      <div id="probe-progress"></div>
+
+      <div class="field-row">
+        <label for="poll-report-id">Report ID p/ Poll (hex)</label>
+        <input id="poll-report-id" class="hex-input" type="text" value="01" maxlength="2" />
+      </div>
+      <button id="btn-poll">Forçar Leitura (Poll)</button>
+    </div>
+
+    <div class="panel-title">Logitech · HID++ 2.0</div>
+    <div class="sub-panel">
+      <p class="hint">
+        Envia um pacote HID++ 2.0 padrão (Report ID <code>0x10</code>/curto) para o
+        <b>Root (feature 0x0000)</b>: função <code>GetProtocolVersion</code> (Ping) e
+        <code>GetFeature</code> para <b>Adjustable DPI (0x2201)</b> e
+        <b>Battery Status (0x1000)</b>. Respostas chegam como <code>inputreport</code> no mesmo
+        Report ID e aparecem no log/grade normalmente — filtre por <code>0x10</code> se necessário.
+        Detectado automaticamente ao conectar um VID <code>0x046d</code>.
+      </p>
+      <div class="field-row">
+        <label for="hidpp-device-index">Device Index (hex)</label>
+        <input id="hidpp-device-index" class="hex-input" type="text" value="ff" maxlength="2" />
+      </div>
+      <p class="hint" style="margin-top:-4px;">
+        <code>0xff</code> = cabo/receptor direto. Se o mouse estiver pareado via receptor
+        Logitech Bolt/Unifying, troque para <code>01</code>, <code>02</code>...
+      </p>
+      <button id="btn-logitech-ping">Ping / Forçar Leitura Logitech</button>
+      <div id="hidpp-progress"></div>
     </div>
   </section>
 
@@ -311,7 +392,10 @@
         Clique em <b>Conectar mouse</b>, selecione o dispositivo na caixa do navegador,
         depois abra o software oficial do fabricante (ou use os botões físicos de DPI/perfil
         do mouse, se houver) e altere um valor por vez.<br /><br />
-        Se os bytes não aparecerem ao clicar nos botões, use a função <b>Sondar Feature Reports</b>.
+        Se nada aparecer sozinho, use os painéis de <b>sondagem manual</b> à esquerda —
+        muitos mouses só respondem quando o host pergunta primeiro.<br /><br />
+        Cada byte que mudar vai piscar em <b style="color:#ffb000">âmbar</b> na grade acima —
+        esse é o offset que controla aquele valor.
       </div>
     </div>
   </section>
@@ -330,22 +414,38 @@
     btnClear: document.getElementById("btn-clear"),
     btnExport: document.getElementById("btn-export"),
     btnProbe: document.getElementById("btn-probe"),
+    btnPoll: document.getElementById("btn-poll"),
+    btnLogitechPing: document.getElementById("btn-logitech-ping"),
+    pollReportId: document.getElementById("poll-report-id"),
+    hidppDeviceIndex: document.getElementById("hidpp-device-index"),
+    probeProgress: document.getElementById("probe-progress"),
+    hidppProgress: document.getElementById("hidpp-progress"),
     deviceInfo: document.getElementById("device-info"),
-    probePanel: document.getElementById("probe-panel"),
     diName: document.getElementById("di-name"),
     diVid: document.getElementById("di-vid"),
     diPid: document.getElementById("di-pid"),
+    diVendorBadge: document.getElementById("di-vendor-badge"),
     reportFilter: document.getElementById("report-filter"),
     byteGrid: document.getElementById("byte-grid"),
     log: document.getElementById("log"),
     emptyState: document.getElementById("empty-state"),
   };
 
+  const LOGITECH_VID = 0x046d;
+  const HIDPP_SHORT = 0x10;
+  const HIDPP_LONG = 0x11;
+  const HIDPP_SOFTWARE_ID = 0x01; // identifica nossas próprias requisições nas respostas
+
   let device = null;
   let paused = false;
+  let pollTimer = null;
   let knownReportIds = new Set();
-  let lastBytesByReportId = new Map();
-  let history = []; 
+  let lastBytesByReportId = new Map(); // reportId -> array de bytes (para diff)
+  let history = []; // registros completos, para exportação
+
+  // ------------------------------------------------------------------
+  // Utilidades de UI
+  // ------------------------------------------------------------------
 
   function setStatus(connected, text) {
     els.statusLine.classList.toggle("connected", connected);
@@ -354,6 +454,13 @@
 
   function toHex(byte) {
     return byte.toString(16).padStart(2, "0");
+  }
+
+  function parseHexInput(el, fallback) {
+    const raw = (el.value || "").trim().replace(/^0x/i, "");
+    const val = parseInt(raw, 16);
+    if (Number.isNaN(val) || val < 0 || val > 255) return fallback;
+    return val;
   }
 
   function ensureReportOption(reportId) {
@@ -375,21 +482,15 @@
     });
   }
 
-  function appendLogRow(reportId, bytes, changedMask, isSystem = false, systemMsg = "") {
-    els.emptyState?.remove();
-    
-    if (isSystem) {
-      const row = document.createElement("div");
-      row.className = "log-row system";
-      row.textContent = systemMsg;
-      els.log.prepend(row);
-      return;
-    }
+  function removeEmptyState() {
+    if (els.emptyState && els.emptyState.parentNode) els.emptyState.remove();
+  }
 
+  function appendLogRow(reportId, bytes, changedMask, source) {
+    removeEmptyState();
     if (els.reportFilter.value !== "all" && els.reportFilter.value !== String(reportId)) {
-      return;
+      return; // ainda guardado no histórico completo, só não renderizado
     }
-
     const row = document.createElement("div");
     row.className = "log-row";
     const ts = new Date().toLocaleTimeString("pt-BR", { hour12: false }) +
@@ -402,6 +503,7 @@
     row.innerHTML = `
       <span class="ts">${ts}</span>
       <span class="rid">0x${toHex(reportId)}</span>
+      <span class="src">${source || "live"}</span>
       <span class="bytes">${bytesHtml}</span>
     `;
     els.log.prepend(row);
@@ -411,53 +513,45 @@
     }
   }
 
-  function processReport(reportId, buffer) {
-    const bytes = Array.from(new Uint8Array(buffer));
-    ensureReportOption(reportId);
+  function appendSystemNote(message) {
+    removeEmptyState();
+    const row = document.createElement("div");
+    row.className = "log-row system";
+    const ts = new Date().toLocaleTimeString("pt-BR", { hour12: false });
+    row.innerHTML = `<span class="ts">${ts}</span><span class="msg">${message}</span>`;
+    els.log.prepend(row);
+  }
 
+  function recordReport(reportId, bytes, source) {
+    ensureReportOption(reportId);
     const prev = lastBytesByReportId.get(reportId);
     const changedMask = bytes.map((b, i) => (prev ? prev[i] !== b : false));
     lastBytesByReportId.set(reportId, bytes);
 
     renderByteGrid(bytes, changedMask);
-    appendLogRow(reportId, bytes, changedMask);
+    appendLogRow(reportId, bytes, changedMask, source);
 
     history.push({
       timestamp: new Date().toISOString(),
       reportId,
+      source: source || "live",
       bytesHex: bytes.map(toHex),
     });
   }
 
+  // ------------------------------------------------------------------
+  // Escuta espontânea (inputreport nativo)
+  // ------------------------------------------------------------------
+
   function handleInputReport(event) {
     if (paused) return;
-    processReport(event.reportId, event.data.buffer);
+    const bytes = Array.from(new Uint8Array(event.data.buffer));
+    recordReport(event.reportId, bytes, "live");
   }
 
-  // --- NOVA LÓGICA DE SONDAGEM (PROBE) ---
-  async function probeFeatures() {
-    if (!device || !device.opened) {
-      alert("Nenhum mouse conectado.");
-      return;
-    }
-
-    appendLogRow(0, [], [], true, "Iniciando sondagem manual de Feature Reports (0x01 a 0x20)...");
-    let found = 0;
-
-    for (let id = 1; id <= 32; id++) {
-      try {
-        const dataView = await device.receiveFeatureReport(id);
-        if (dataView && dataView.byteLength > 0) {
-          processReport(id, dataView.buffer);
-          found++;
-        }
-      } catch (err) {
-        // Ignora erros silenciosamente (nem todo ID de relatório existe no mouse)
-      }
-    }
-
-    appendLogRow(0, [], [], true, `Sondagem concluída. Encontrados ${found} relatórios ativos.`);
-  }
+  // ------------------------------------------------------------------
+  // Conexão
+  // ------------------------------------------------------------------
 
   async function connect() {
     if (!("hid" in navigator)) {
@@ -476,25 +570,47 @@
       els.diVid.textContent = "0x" + device.vendorId.toString(16).padStart(4, "0");
       els.diPid.textContent = "0x" + device.productId.toString(16).padStart(4, "0");
       els.deviceInfo.classList.add("visible");
-      els.probePanel.classList.add("visible");
+
+      const isLogitech = device.vendorId === LOGITECH_VID;
+      els.diVendorBadge.style.display = isLogitech ? "inline-block" : "none";
 
       setStatus(true, "conectado");
       els.btnConnect.disabled = true;
       els.btnDisconnect.disabled = false;
+
+      appendSystemNote(
+        `Conectado a "${device.productName}" (VID 0x${toHex(device.vendorId >> 8)}${toHex(device.vendorId & 0xff)}, ` +
+        `PID 0x${toHex(device.productId >> 8)}${toHex(device.productId & 0xff)}).`
+      );
+
+      if (isLogitech) {
+        appendSystemNote("VID Logitech detectado — enviando handshake HID++ 2.0 automaticamente...");
+        // pequeno atraso para garantir que o listener de inputreport já está ativo
+        setTimeout(() => { logitechHandshake(); }, 300);
+      }
     } catch (err) {
-      alert("Erro ao conectar: " + err.message);
+      let msg;
+      if (err.name === "NotFoundError") {
+        msg = "Nenhum dispositivo foi selecionado.";
+      } else if (err.name === "SecurityError") {
+        msg = "Acesso HID bloqueado pelo navegador. Confirme que a página está em HTTPS ou localhost.";
+      } else {
+        msg = "Erro ao conectar: " + err.message;
+      }
+      alert(msg);
     }
   }
 
   async function disconnect() {
-    if (!device) return;
-    try { await device.close(); } catch (_) {}
+    stopPoll();
+    if (device) {
+      try { await device.close(); } catch (_) {}
+    }
     device = null;
     setStatus(false, "desconectado");
     els.btnConnect.disabled = false;
     els.btnDisconnect.disabled = true;
     els.deviceInfo.classList.remove("visible");
-    els.probePanel.classList.remove("visible");
   }
 
   function clearLog() {
@@ -505,7 +621,10 @@
   }
 
   function exportLog() {
-    if (history.length === 0) return alert("Ainda não há relatórios capturados.");
+    if (history.length === 0) {
+      alert("Ainda não há relatórios capturados.");
+      return;
+    }
     const blob = new Blob([JSON.stringify(history, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -515,11 +634,165 @@
     URL.revokeObjectURL(url);
   }
 
+  // ------------------------------------------------------------------
+  // Sondagem manual de Feature Reports (0x01 – 0x20)
+  // Útil para dispositivos "mudos" que só relatam sob pedido explícito.
+  // ------------------------------------------------------------------
+
+  async function probeFeatureReports() {
+    if (!device) { alert("Conecte um mouse primeiro."); return; }
+    els.btnProbe.disabled = true;
+    const responded = [];
+
+    for (let id = 0x01; id <= 0x20; id++) {
+      els.probeProgress.textContent = `Sondando 0x${toHex(id)}...`;
+      try {
+        const view = await device.receiveFeatureReport(id);
+        const bytes = Array.from(new Uint8Array(view.buffer));
+        recordReport(id, bytes, "feature");
+        responded.push(id);
+      } catch (_err) {
+        // Report ID inexistente/não suportado é o caso comum — ignora silenciosamente
+      }
+    }
+
+    els.btnProbe.disabled = false;
+    els.probeProgress.textContent = "";
+
+    if (responded.length === 0) {
+      appendSystemNote(
+        "Nenhum Feature Report respondeu entre 0x01–0x20. O dispositivo pode não expor " +
+        "Feature Reports nessa interface, ou pode ter múltiplas interfaces HID — " +
+        "desconecte e reconecte escolhendo outra entrada, se o navegador oferecer mais de uma para o mesmo mouse."
+      );
+    } else {
+      appendSystemNote(
+        `Feature Reports que responderam: ${responded.map((r) => "0x" + toHex(r)).join(", ")}.`
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Poll manual — repete receiveFeatureReport(id) em intervalo fixo
+  // ------------------------------------------------------------------
+
+  function startPoll(id) {
+    pollTimer = setInterval(async () => {
+      if (!device) { stopPoll(); return; }
+      try {
+        const view = await device.receiveFeatureReport(id);
+        const bytes = Array.from(new Uint8Array(view.buffer));
+        recordReport(id, bytes, "poll");
+      } catch (_err) {
+        // interface pode recusar temporariamente; não interrompe o poll por isso
+      }
+    }, 300);
+  }
+
+  function stopPoll() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    els.btnPoll.textContent = "Forçar Leitura (Poll)";
+    els.btnPoll.classList.remove("active");
+  }
+
+  function togglePoll() {
+    if (pollTimer) {
+      stopPoll();
+      return;
+    }
+    if (!device) { alert("Conecte um mouse primeiro."); return; }
+    const id = parseHexInput(els.pollReportId, 0x01);
+    els.btnPoll.textContent = "Parar Poll";
+    els.btnPoll.classList.add("active");
+    startPoll(id);
+  }
+
+  // ------------------------------------------------------------------
+  // Logitech HID++ 2.0
+  //
+  // Estrutura oficial (Logitech/cpg-docs, hidpp20/README.rst):
+  //   Report curto 0x10 (7 bytes) / longo 0x11 (20 bytes)
+  //   byte0 = Report ID | byte1 = Device Index | byte2 = Feature Index
+  //   byte3 = (Function << 4) | Software ID | byte4..fim = Parâmetros
+  //
+  // Feature 0x0000 (IRoot) está sempre no índice 0 e expõe:
+  //   função 0 = GetFeature(featureId) -> featureIndex
+  //   função 1 = GetProtocolVersion(pingData) -> também serve como Ping/keep-alive
+  //
+  // As respostas chegam como inputreport comum no mesmo Report ID (0x10/0x11),
+  // então aparecem no log e na grade normalmente — não é preciso receiveFeatureReport.
+  // ------------------------------------------------------------------
+
+  function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
+    const p = [0, 0, 0];
+    (params || []).forEach((v, i) => { if (i < 3) p[i] = v & 0xff; });
+    const funcByte = ((functionId & 0x0f) << 4) | (HIDPP_SOFTWARE_ID & 0x0f);
+    return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
+  }
+
+  async function sendHidppShort(deviceIndex, featureIndex, functionId, params, label) {
+    if (!device) return false;
+    const data = buildHidppShortPacket(deviceIndex, featureIndex, functionId, params);
+    try {
+      await device.sendReport(HIDPP_SHORT, data);
+      appendSystemNote(`→ HID++ enviado: ${label} (feature idx 0x${toHex(featureIndex)}, função ${functionId}, dev idx 0x${toHex(deviceIndex)})`);
+      return true;
+    } catch (err) {
+      let msg;
+      if (err.name === "InvalidStateError") {
+        msg = `✗ Falha ao enviar "${label}": interface ocupada. Confirme que o Logitech G HUB está fechado.`;
+      } else {
+        msg = `✗ Falha ao enviar "${label}": ${err.message}`;
+      }
+      appendSystemNote(msg);
+      return false;
+    }
+  }
+
+  async function logitechHandshake() {
+    if (!device) { alert("Conecte um mouse primeiro."); return; }
+    els.btnLogitechPing.disabled = true;
+    els.hidppProgress.textContent = "Enviando handshake HID++...";
+
+    const deviceIndex = parseHexInput(els.hidppDeviceIndex, 0xff);
+
+    // 1. Ping ao Root (feature idx 0, função 1 = GetProtocolVersion).
+    //    Além de confirmar a versão do protocolo, isso costuma "acordar" o
+    //    dispositivo e instruí-lo a começar a notificar mudanças.
+    await sendHidppShort(deviceIndex, 0x00, 0x01, [0x00, 0x00, 0x5a], "Ping (GetProtocolVersion)");
+    await new Promise((r) => setTimeout(r, 200));
+
+    // 2. Resolve o índice da feature Adjustable DPI (0x2201) via Root.GetFeature.
+    await sendHidppShort(deviceIndex, 0x00, 0x00, [0x22, 0x01, 0x00], "GetFeature Adjustable DPI (0x2201)");
+    await new Promise((r) => setTimeout(r, 200));
+
+    // 3. Resolve o índice da feature Battery Unified Level Status (0x1000).
+    await sendHidppShort(deviceIndex, 0x00, 0x00, [0x10, 0x00, 0x00], "GetFeature Battery Status (0x1000)");
+
+    els.btnLogitechPing.disabled = false;
+    els.hidppProgress.textContent = "";
+    appendSystemNote(
+      "Handshake enviado. Filtre o log por Report ID 0x10 para ver as respostas. " +
+      "Byte 1 de cada resposta = índice da feature encontrada (0x00 = não suportada/não encontrada). " +
+      "Os IDs de função para ler o valor de DPI/bateria dentro dessas features específicas variam por " +
+      "firmware — use esse índice junto com a grade de bytes para descobrir por tentativa."
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // Listeners
+  // ------------------------------------------------------------------
+
   els.btnConnect.addEventListener("click", connect);
   els.btnDisconnect.addEventListener("click", disconnect);
   els.btnClear.addEventListener("click", clearLog);
   els.btnExport.addEventListener("click", exportLog);
-  els.btnProbe.addEventListener("click", probeFeatures);
+  els.btnProbe.addEventListener("click", probeFeatureReports);
+  els.btnPoll.addEventListener("click", togglePoll);
+  els.btnLogitechPing.addEventListener("click", logitechHandshake);
   els.btnPause.addEventListener("click", () => {
     paused = !paused;
     els.btnPause.textContent = paused ? "Retomar captura" : "Pausar captura";
