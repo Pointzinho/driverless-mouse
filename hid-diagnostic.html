@@ -14,9 +14,9 @@
     --line: #1e2b31;
     --text: #c9d6da;
     --text-dim: #5f7680;
-    --signal: #ffb000;      /* âmbar de fósforo — byte que mudou */
+    --signal: #ffb000;
     --signal-dim: #6b4c00;
-    --stable: #4fd1c5;      /* teal — byte estável, presente */
+    --stable: #4fd1c5;
     --danger: #ff5d5d;
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
@@ -96,7 +96,6 @@
     border-bottom: 1px solid var(--line);
   }
 
-  /* ---- Coluna esquerda: controles + grade de bytes ---- */
   #controls { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 
   button {
@@ -112,7 +111,6 @@
   }
   button:hover:not(:disabled) { border-color: var(--signal); color: #fff; }
   button:disabled { opacity: 0.35; cursor: not-allowed; }
-  button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
   button.primary { border-color: var(--signal); color: var(--signal); }
   button.primary:hover:not(:disabled) { background: var(--signal); color: #0a0f12; }
 
@@ -142,7 +140,21 @@
     border-radius: 4px;
   }
 
-  /* Grade de bytes — o elemento assinatura da página */
+  /* ---- Sondagem manual (probe / poll) ---- */
+  #probe-panel {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
+  #probe-panel.visible { display: flex; }
+  #probe-panel .hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
   #byte-grid {
     display: grid;
     grid-template-columns: repeat(8, 1fr);
@@ -195,7 +207,6 @@
   #grid-legend .i-stable { background: var(--stable); }
   #grid-legend .i-changed { background: var(--signal); }
 
-  /* ---- Coluna direita: log bruto ---- */
   #log-header {
     display: flex;
     align-items: center;
@@ -225,6 +236,7 @@
   .log-row .bytes { font-size: 12px; letter-spacing: 0.03em; word-break: break-all; }
   .log-row .bytes .b { padding: 0 1px; }
   .log-row .bytes .b.diff { color: var(--signal); font-weight: 700; }
+  .log-row.system { color: var(--signal); font-style: italic; display: block; padding: 10px 16px;}
 
   #empty-state {
     padding: 40px 24px;
@@ -269,6 +281,13 @@
       </div>
 
       <button id="btn-pause">Pausar captura</button>
+
+      <!-- Novo Painel de Sondagem adicionado -->
+      <div id="probe-panel">
+        <span class="hint">Se o mouse não enviar dados sozinho, clique abaixo para forçar a leitura da memória interna via Feature Reports.</span>
+        <button id="btn-probe">Sondar Feature Reports (Probe)</button>
+      </div>
+
     </div>
 
     <div class="panel-title">Grade de bytes (último relatório)</div>
@@ -292,8 +311,7 @@
         Clique em <b>Conectar mouse</b>, selecione o dispositivo na caixa do navegador,
         depois abra o software oficial do fabricante (ou use os botões físicos de DPI/perfil
         do mouse, se houver) e altere um valor por vez.<br /><br />
-        Cada byte que mudar vai piscar em <b style="color:#ffb000">âmbar</b> na grade acima —
-        esse é o offset que controla aquele valor.
+        Se os bytes não aparecerem ao clicar nos botões, use a função <b>Sondar Feature Reports</b>.
       </div>
     </div>
   </section>
@@ -311,7 +329,9 @@
     btnPause: document.getElementById("btn-pause"),
     btnClear: document.getElementById("btn-clear"),
     btnExport: document.getElementById("btn-export"),
+    btnProbe: document.getElementById("btn-probe"),
     deviceInfo: document.getElementById("device-info"),
+    probePanel: document.getElementById("probe-panel"),
     diName: document.getElementById("di-name"),
     diVid: document.getElementById("di-vid"),
     diPid: document.getElementById("di-pid"),
@@ -324,8 +344,8 @@
   let device = null;
   let paused = false;
   let knownReportIds = new Set();
-  let lastBytesByReportId = new Map(); // reportId -> Uint8Array (para diff)
-  let history = []; // registros completos, para exportação
+  let lastBytesByReportId = new Map();
+  let history = []; 
 
   function setStatus(connected, text) {
     els.statusLine.classList.toggle("connected", connected);
@@ -355,39 +375,44 @@
     });
   }
 
-  function appendLogRow(reportId, bytes, changedMask) {
-    if (els.reportFilter.value !== "all" && els.reportFilter.value !== String(reportId)) {
-      // ainda guarda no histórico, só não renderiza
-    } else {
-      els.emptyState.remove();
+  function appendLogRow(reportId, bytes, changedMask, isSystem = false, systemMsg = "") {
+    els.emptyState?.remove();
+    
+    if (isSystem) {
       const row = document.createElement("div");
-      row.className = "log-row";
-      const ts = new Date().toLocaleTimeString("pt-BR", { hour12: false }) +
-        "." + String(new Date().getMilliseconds()).padStart(3, "0");
-
-      const bytesHtml = bytes
-        .map((b, i) => `<span class="b ${changedMask[i] ? "diff" : ""}">${toHex(b)}</span>`)
-        .join(" ");
-
-      row.innerHTML = `
-        <span class="ts">${ts}</span>
-        <span class="rid">0x${toHex(reportId)}</span>
-        <span class="bytes">${bytesHtml}</span>
-      `;
+      row.className = "log-row system";
+      row.textContent = systemMsg;
       els.log.prepend(row);
+      return;
+    }
 
-      // limita o DOM a 500 linhas visíveis por performance
-      while (els.log.children.length > 500) {
-        els.log.removeChild(els.log.lastChild);
-      }
+    if (els.reportFilter.value !== "all" && els.reportFilter.value !== String(reportId)) {
+      return;
+    }
+
+    const row = document.createElement("div");
+    row.className = "log-row";
+    const ts = new Date().toLocaleTimeString("pt-BR", { hour12: false }) +
+      "." + String(new Date().getMilliseconds()).padStart(3, "0");
+
+    const bytesHtml = bytes
+      .map((b, i) => `<span class="b ${changedMask[i] ? "diff" : ""}">${toHex(b)}</span>`)
+      .join(" ");
+
+    row.innerHTML = `
+      <span class="ts">${ts}</span>
+      <span class="rid">0x${toHex(reportId)}</span>
+      <span class="bytes">${bytesHtml}</span>
+    `;
+    els.log.prepend(row);
+
+    while (els.log.children.length > 500) {
+      els.log.removeChild(els.log.lastChild);
     }
   }
 
-  function handleInputReport(event) {
-    if (paused) return;
-
-    const reportId = event.reportId;
-    const bytes = Array.from(new Uint8Array(event.data.buffer));
+  function processReport(reportId, buffer) {
+    const bytes = Array.from(new Uint8Array(buffer));
     ensureReportOption(reportId);
 
     const prev = lastBytesByReportId.get(reportId);
@@ -402,6 +427,36 @@
       reportId,
       bytesHex: bytes.map(toHex),
     });
+  }
+
+  function handleInputReport(event) {
+    if (paused) return;
+    processReport(event.reportId, event.data.buffer);
+  }
+
+  // --- NOVA LÓGICA DE SONDAGEM (PROBE) ---
+  async function probeFeatures() {
+    if (!device || !device.opened) {
+      alert("Nenhum mouse conectado.");
+      return;
+    }
+
+    appendLogRow(0, [], [], true, "Iniciando sondagem manual de Feature Reports (0x01 a 0x20)...");
+    let found = 0;
+
+    for (let id = 1; id <= 32; id++) {
+      try {
+        const dataView = await device.receiveFeatureReport(id);
+        if (dataView && dataView.byteLength > 0) {
+          processReport(id, dataView.buffer);
+          found++;
+        }
+      } catch (err) {
+        // Ignora erros silenciosamente (nem todo ID de relatório existe no mouse)
+      }
+    }
+
+    appendLogRow(0, [], [], true, `Sondagem concluída. Encontrados ${found} relatórios ativos.`);
   }
 
   async function connect() {
@@ -421,33 +476,25 @@
       els.diVid.textContent = "0x" + device.vendorId.toString(16).padStart(4, "0");
       els.diPid.textContent = "0x" + device.productId.toString(16).padStart(4, "0");
       els.deviceInfo.classList.add("visible");
+      els.probePanel.classList.add("visible");
 
       setStatus(true, "conectado");
       els.btnConnect.disabled = true;
       els.btnDisconnect.disabled = false;
     } catch (err) {
-      let msg;
-      if (err.name === "NotFoundError") {
-        msg = "Nenhum dispositivo foi selecionado.";
-      } else if (err.name === "SecurityError") {
-        msg = "Acesso HID bloqueado pelo navegador. Confirme que a página está em HTTPS ou localhost.";
-      } else {
-        msg = "Erro ao conectar: " + err.message;
-      }
-      alert(msg);
+      alert("Erro ao conectar: " + err.message);
     }
   }
 
   async function disconnect() {
     if (!device) return;
-    try {
-      await device.close();
-    } catch (_) {}
+    try { await device.close(); } catch (_) {}
     device = null;
     setStatus(false, "desconectado");
     els.btnConnect.disabled = false;
     els.btnDisconnect.disabled = true;
     els.deviceInfo.classList.remove("visible");
+    els.probePanel.classList.remove("visible");
   }
 
   function clearLog() {
@@ -458,10 +505,7 @@
   }
 
   function exportLog() {
-    if (history.length === 0) {
-      alert("Ainda não há relatórios capturados.");
-      return;
-    }
+    if (history.length === 0) return alert("Ainda não há relatórios capturados.");
     const blob = new Blob([JSON.stringify(history, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -475,6 +519,7 @@
   els.btnDisconnect.addEventListener("click", disconnect);
   els.btnClear.addEventListener("click", clearLog);
   els.btnExport.addEventListener("click", exportLog);
+  els.btnProbe.addEventListener("click", probeFeatures);
   els.btnPause.addEventListener("click", () => {
     paused = !paused;
     els.btnPause.textContent = paused ? "Retomar captura" : "Pausar captura";
