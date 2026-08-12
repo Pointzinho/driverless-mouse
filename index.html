@@ -284,7 +284,45 @@
     transform: translateY(-2px);
   }
 
-  /* Aviso amigável (não é um log — é uma mensagem só) */
+  /* Card de controle ativo de DPI (full width) */
+  #dpi-control-card { display: flex; flex-direction: column; gap: 18px; }
+  #dpi-current-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  #dpi-current-value {
+    font-family: var(--mono);
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  #dpi-current-unit {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  #dpi-apply-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  #dpi-input {
+    flex: 1;
+    min-width: 160px;
+    font-family: var(--mono);
+    font-size: 15px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  #dpi-input:focus { outline: none; border-color: var(--signal); }
+  #btn-apply-dpi { padding: 12px 22px; }
+
+
+  /* Aviso amigável */
   #notice {
     display: none;
     align-items: flex-start;
@@ -362,9 +400,21 @@
       </div>
 
       <div class="card">
-        <p class="card-label">Estágio de DPI</p>
+        <p class="card-label">Estágio ativo</p>
         <p id="dpi-stage-label">Aguardando leitura — <b>troque o DPI no mouse</b> para detectar</p>
         <div id="dpi-dots"></div>
+      </div>
+    </div>
+
+    <div class="card" id="dpi-control-card">
+      <p class="card-label">DPI do perfil ativo</p>
+      <div id="dpi-current-row">
+        <span id="dpi-current-value">—</span>
+        <span id="dpi-current-unit">DPI</span>
+      </div>
+      <div id="dpi-apply-row">
+        <input id="dpi-input" type="number" min="100" max="32000" step="50" placeholder="ex: 1600" />
+        <button id="btn-apply-dpi" class="primary">Aplicar DPI</button>
       </div>
     </div>
   </div>
@@ -393,6 +443,9 @@
     batteryFill: document.getElementById("battery-bar-fill"),
     dpiStageLabel: document.getElementById("dpi-stage-label"),
     dpiDots: document.getElementById("dpi-dots"),
+    dpiCurrentValue: document.getElementById("dpi-current-value"),
+    dpiInput: document.getElementById("dpi-input"),
+    btnApplyDpi: document.getElementById("btn-apply-dpi"),
   };
 
   const DPI_STAGE_COUNT = 5;
@@ -432,6 +485,8 @@
     els.batteryBadge.classList.remove("visible");
     dpiDotEls.forEach((d) => d.classList.remove("active"));
     els.dpiStageLabel.innerHTML = "Aguardando leitura — <b>troque o DPI no mouse</b> para detectar";
+    els.dpiCurrentValue.textContent = "—";
+    els.dpiInput.value = "";
   };
 
   controller.onDisconnect = () => {
@@ -443,6 +498,14 @@
   controller.onDpiStageChange = (stage) => {
     dpiDotEls.forEach((d) => d.classList.toggle("active", Number(d.dataset.stage) === stage));
     els.dpiStageLabel.innerHTML = `Perfil ativo: <b>Estágio ${stage + 1} de ${DPI_STAGE_COUNT}</b>`;
+  };
+
+  controller.onDpiValueChange = (dpiValue) => {
+    els.dpiCurrentValue.textContent = dpiValue;
+    // Só preenche o input se o usuário não estiver digitando ali agora
+    if (document.activeElement !== els.dpiInput) {
+      els.dpiInput.value = dpiValue;
+    }
   };
 
   controller.onBatteryUpdate = (percentage, isCharging) => {
@@ -466,9 +529,26 @@
     await controller.disconnect();
   }
 
+  async function handleApplyDpiClick() {
+    const value = Number(els.dpiInput.value);
+    if (!value || value <= 0) {
+      showNotice("Digite um valor de DPI válido antes de aplicar.");
+      return;
+    }
+    els.btnApplyDpi.disabled = true;
+    els.btnApplyDpi.textContent = "Aplicando...";
+    await controller.setDpi(value);
+    els.btnApplyDpi.disabled = false;
+    els.btnApplyDpi.textContent = "Aplicar DPI";
+  }
+
   els.btnConnect.addEventListener("click", handleConnectClick);
   els.btnDisconnect.addEventListener("click", handleDisconnectClick);
   els.btnDisconnectHeader.addEventListener("click", handleDisconnectClick);
+  els.btnApplyDpi.addEventListener("click", handleApplyDpiClick);
+  els.dpiInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") handleApplyDpiClick();
+  });
 
   if (!MouseController.isSupported()) {
     showNotice("Este navegador não suporta WebHID. Abra este site no Chrome ou Edge desktop.");
