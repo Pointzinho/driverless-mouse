@@ -57,9 +57,13 @@ const LOGITECH_G502X = {
     0xc547: "Sem fio / Dongle LIGHTSPEED",
   },
   knownDeviceIndexes: [0xff, 0x01],
-  batteryFeatureIndex: 0x06,
+  
+  // Variáveis dinâmicas agora (iniciam vazias)
+  batteryFeatureIndex: null,
+  adjustableDpiFeatureIndex: null, 
+  
+  // O index do evento de DPI físico costuma ser fixo, mas validamos
   dpiEventFeatureIndex: 0x09,     
-  adjustableDpiFeatureIndex: 0x07, 
   dpiStageCount: 5,
   batteryPollIntervalMs: 30000, 
 
@@ -71,17 +75,63 @@ const LOGITECH_G502X = {
     return productId === 0xc547 ? 0x01 : 0xff;
   },
 
+  /**
+   * Resolve dinamicamente o Feature Index consultando o IRoot (0x00)
+   */
+  async resolveFeature(controller, featureId) {
+    return new Promise((resolve) => {
+      let timeout;
+
+      const listener = (event) => {
+        const bytes = Array.from(new Uint8Array(event.data.buffer));
+        
+        // Se a resposta for do nosso dispositivo, para a feature 0x00 (IRoot) e for GetFeature (0x00)
+        if (bytes[0] === controller.deviceIndex && bytes[1] === 0x00 && (bytes[2] >> 4) === 0x00) {
+          const featureIndex = bytes[3];
+          clearTimeout(timeout);
+          controller.device.removeEventListener("inputreport", listener);
+          resolve(featureIndex !== 0 ? featureIndex : null);
+        }
+      };
+
+      controller.device.addEventListener("inputreport", listener);
+
+      // Timeout de segurança
+      timeout = setTimeout(() => {
+        controller.device.removeEventListener("inputreport", listener);
+        resolve(null);
+      }, 1500);
+
+      const high = (featureId >> 8) & 0xff;
+      const low = featureId & 0xff;
+      controller._sendHidppShort(0x00, 0x00, [high, low, 0x00], `GetFeature(0x${featureId.toString(16).padStart(4, '0')})`);
+    });
+  },
+
   async init(controller) {
     controller.deviceIndex = this.resolveDeviceIndex(controller.device.productId);
+    
+    // 1. Resolve dinamicamente as features antes de mandar qualquer comando
+    this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201);
+    this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004);
+
     await controller._logitechPing();
     await new Promise((r) => setTimeout(r, 150));
-    await controller._logitechRequestBattery(); 
-    controller._startLogitechBatteryPolling();
-    await new Promise((r) => setTimeout(r, 150));
-    await this.getDpi(controller); 
+    
+    // Só tenta ler bateria e DPI se as gavetas foram encontradas corretamente
+    if (this.batteryFeatureIndex !== null) {
+      await controller._logitechRequestBattery(); 
+      controller._startLogitechBatteryPolling();
+    }
+    
+    if (this.adjustableDpiFeatureIndex !== null) {
+      await new Promise((r) => setTimeout(r, 150));
+      await this.getDpi(controller); 
+    }
   },
 
   async getDpi(controller) {
+    if (this.adjustableDpiFeatureIndex === null) return;
     await controller._sendHidppShort(
       this.adjustableDpiFeatureIndex,
       0x01,
@@ -91,6 +141,8 @@ const LOGITECH_G502X = {
   },
 
   async setDpi(controller, dpiValue) {
+    if (this.adjustableDpiFeatureIndex === null) return false;
+    
     const clamped = Math.max(100, Math.min(32000, dpiValue));
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
@@ -111,7 +163,7 @@ const LOGITECH_G502X = {
     const deviceIndexOk = this.knownDeviceIndexes.includes(bytes[0]);
 
     // Resposta de leitura/escrita de DPI numérico
-    if (deviceIndexOk && bytes[1] === this.adjustableDpiFeatureIndex && bytes.length > 4) {
+    if (deviceIndexOk && this.adjustableDpiFeatureIndex !== null && bytes[1] === this.adjustableDpiFeatureIndex && bytes.length > 4) {
       const dpiValue = (bytes[3] << 8) | bytes[4];
       if (dpiValue > 0) {
         controller._emitDpiValue(dpiValue);
@@ -124,20 +176,17 @@ const LOGITECH_G502X = {
       const stage = bytes[3];
       if (stage >= 0 && stage < this.dpiStageCount) {
         controller._emitDpiStage(stage);
-        
-        // A MAGIA: Quando o estágio mudar, ele automaticamente pede ao mouse qual é o número de DPI novo!
         this.getDpi(controller); 
         return;
       }
     }
 
     // Bateria
-    if (deviceIndexOk && (reportId === HIDPP_SHORT_REPORT_ID || reportId === HIDPP_LONG_REPORT_ID) && bytes[1] === this.batteryFeatureIndex) {
-      const percentage = bytes[3];
-      const chargingStatus = bytes[5]; // Corrigido para pegar o status do byte correto da função
+    if (deviceIndexOk && this.batteryFeatureIndex !== null && (reportId === HIDPP_SHORT_REPORT_ID || reportId === HIDPP_LONG_REPORT_ID) && bytes[1] === this.batteryFeatureIndex) {
+      const percentage = bytes[3]; // Esse agora será o 85% real!
+      const chargingStatus = bytes[4]; // Restaurado o índice padrão da Logitech para Status de Carga
       const isCharging = chargingStatus === 1 || chargingStatus === 2;
       
-      // Alguns firmwares enviam um índice antes da carga real, validamos se está entre 0 e 100
       if (percentage >= 0 && percentage <= 100) {
         controller._emitBattery(percentage, isCharging);
       }
@@ -319,6 +368,7 @@ export class MouseController {
   }
 
   async _logitechRequestBattery() {
+    if (this.profile.batteryFeatureIndex === null) return;
     await this._sendHidppShort(
       this.profile.batteryFeatureIndex,
       0x00,
