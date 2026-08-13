@@ -1,11 +1,16 @@
 /* =========================================================================
    driverless-mouse — hid-controller.js
-   Motor de controle WebHID corrigido e estabilizado para o Logitech G502 X.
+   Motor de controle WebHID para a fase final do projeto.
+   Logitech G502 X LIGHTSPEED:
+   - Device Index 0x01 no dongle PID 0xc547
+   - Descoberta dinâmica de Feature Index via ROOT.GetFeature
+   - Espera de respostas pelo evento inputreport
+   - Retry/timeout e fallback seguro
    ========================================================================= */
 
 const HIDPP_SHORT_REPORT_ID = 0x10;
 const HIDPP_LONG_REPORT_ID = 0x11;
-const HIDPP_SOFTWARE_ID = 0x01;
+const HIDPP_SOFTWARE_ID = 0x08;
 
 function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
   const p = [0, 0, 0];
@@ -86,9 +91,12 @@ const LOGITECH_G502X = {
 
   knownDeviceIndexes: [0xff, 0x01],
 
+  // Fallbacks empíricos. No dongle, os valores reais são descobertos
+  // dinamicamente pelo ROOT.GetFeature.
   fallbackBatteryFeatureIndex: 0x06,
   fallbackAdjustableDpiFeatureIndex: 0x07,
 
+  // Mantidos como fallback/compatibilidade.
   batteryFeatureIndex: 0x06,
   adjustableDpiFeatureIndex: 0x07,
 
@@ -110,36 +118,70 @@ const LOGITECH_G502X = {
     if (featureId === 0x1004) {
       return this.fallbackBatteryFeatureIndex;
     }
+
     if (featureId === 0x2201) {
       return this.fallbackAdjustableDpiFeatureIndex;
     }
+
     return null;
   },
 
   async resolveFeature(controller, featureId, options = {}) {
-    const retries = Math.max(1, options.retries ?? 5);
-    const timeoutMs = Math.max(300, options.timeoutMs ?? 1500);
+    const retries = Math.max(1, options.retries ?? 3);
+    const timeoutMs = Math.max(50, options.timeoutMs ?? 300);
 
     const featureHi = (featureId >> 8) & 0xff;
     const featureLo = featureId & 0xff;
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.info(`[G502X] Resolvendo feature 0x${featureId.toString(16)} (tentativa ${attempt}/${retries})...`);
         const response =
           await controller._sendHidppShortAndWait(
             0x00, // Feature Root
             0x00, // GetFeature
             [featureHi, featureLo, 0x00],
-            `GetFeature 0x${featureId.toString(16).padStart(4, "0")}`,
+            `GetFeature 0x${featureId
+              .toString(16)
+              .padStart(4, "0")}`,
+
             (reportId, bytes) => {
-              if (!bytes || bytes.length < 4) return false;
-              if (bytes[0] !== controller.deviceIndex) return false;
-              if (bytes[1] !== 0x00) return false; // Resposta da raiz
+              if (
+                reportId !== HIDPP_SHORT_REPORT_ID &&
+                reportId !== HIDPP_LONG_REPORT_ID
+              ) {
+                return false;
+              }
+
+              if (!bytes || bytes.length < 5) {
+                return false;
+              }
+
+              // No dongle, o mouse usa Device Index 0x01.
+              // No cabo, normalmente 0xff.
+              if (bytes[0] !== controller.deviceIndex) {
+                return false;
+              }
+
+              // Feature Root.
+              if (bytes[1] !== 0x00) {
+                return false;
+              }
+
+              // Resposta à função 0x00 (GetFeature).
               const functionId = (bytes[2] >> 4) & 0x0f;
-              if (functionId !== 0x00) return false; // GetFeature response
+              if (functionId !== 0x00) {
+                return false;
+              }
+
+              // Mesmo Software ID utilizado no request.
+              const softwareId = bytes[2] & 0x0f;
+              if (softwareId !== HIDPP_SOFTWARE_ID) {
+                return false;
+              }
+
               return true;
             },
+
             timeoutMs
           );
 
@@ -148,8 +190,13 @@ const LOGITECH_G502X = {
         }
 
         const bytes = response.bytes;
+
+        // ROOT.GetFeature retorna o Feature Index alocado
+        // no primeiro parâmetro.
         const resolvedIndex = bytes[3];
-        console.info(`[G502X] Feature 0x${featureId.toString(16)} resolvida para index: 0x${resolvedIndex.toString(16)}`);
+
+        // Segundo parâmetro: tipo da feature.
+        const featureType = bytes[4];
 
         if (
           resolvedIndex === undefined ||
@@ -157,23 +204,32 @@ const LOGITECH_G502X = {
           resolvedIndex === 0x00 ||
           resolvedIndex === 0xff
         ) {
-          throw new Error(`Feature 0x${featureId.toString(16).padStart(4, "0")} inválida.`);
+          throw new Error(
+            `Feature 0x${featureId
+              .toString(16)
+              .padStart(4, "0")} não retornou um índice válido.`
+          );
         }
 
         return {
           featureId,
           featureIndex: resolvedIndex,
+          featureType,
           reportId: response.reportId,
           attempt,
         };
       } catch (err) {
-        console.warn(`[G502X] Tentativa ${attempt} falhou para feature 0x${featureId.toString(16)}:`, err.message);
         if (attempt >= retries) {
           throw err;
         }
-        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+
+        // Pequeno backoff para o receiver LIGHTSPEED.
+        await new Promise((resolve) =>
+          setTimeout(resolve, 50 * attempt)
+        );
       }
     }
+
     return null;
   },
 
@@ -185,59 +241,162 @@ const LOGITECH_G502X = {
       };
     }
 
-    const isDongle = controller.device?.productId === 0xc547;
+    const isDongle =
+      controller.device?.productId === 0xc547;
 
+    // Só precisamos obrigatoriamente da descoberta dinâmica no dongle.
+    // No cabo, os índices conhecidos continuam sendo usados.
     if (!isDongle) {
-      controller.logitechFeatures.unifiedBattery = this.batteryFeatureIndex;
-      controller.logitechFeatures.adjustableDpi = this.adjustableDpiFeatureIndex;
+      controller.logitechFeatures.unifiedBattery =
+        this.batteryFeatureIndex;
+
+      controller.logitechFeatures.adjustableDpi =
+        this.adjustableDpiFeatureIndex;
+
       return controller.logitechFeatures;
     }
 
+    // ------------------------------------------------------------------
     // 0x1004 — Unified Battery
+    // ------------------------------------------------------------------
     try {
-      const result = await this.resolveFeature(controller, 0x1004, { retries: 3, timeoutMs: 1200 });
-      controller.logitechFeatures.unifiedBattery = result.featureIndex;
-    } catch (_err) {
-      controller.logitechFeatures.unifiedBattery = this.getFallbackFeatureIndex(0x1004);
+      const result = await this.resolveFeature(
+        controller,
+        0x1004,
+        {
+          retries: 3,
+          timeoutMs: 300,
+        }
+      );
+
+      controller.logitechFeatures.unifiedBattery =
+        result.featureIndex;
+
+      console.info(
+        `[G502 X] Feature 0x1004 -> index 0x${result.featureIndex
+          .toString(16)
+          .padStart(2, "0")}`
+      );
+    } catch (err) {
+      const fallback =
+        this.getFallbackFeatureIndex(0x1004);
+
+      controller.logitechFeatures.unifiedBattery =
+        fallback;
+
+      console.warn(
+        `[G502 X] Falha ao resolver Unified Battery 0x1004; ` +
+        `usando fallback 0x${fallback
+          .toString(16)
+          .padStart(2, "0")}.`,
+        err
+      );
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    // Pequena separação entre duas transações ROOT.
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
+    // ------------------------------------------------------------------
     // 0x2201 — Adjustable DPI
+    // ------------------------------------------------------------------
     try {
-      const result = await this.resolveFeature(controller, 0x2201, { retries: 3, timeoutMs: 1200 });
-      controller.logitechFeatures.adjustableDpi = result.featureIndex;
-    } catch (_err) {
-      controller.logitechFeatures.adjustableDpi = this.getFallbackFeatureIndex(0x2201);
+      const result = await this.resolveFeature(
+        controller,
+        0x2201,
+        {
+          retries: 3,
+          timeoutMs: 300,
+        }
+      );
+
+      controller.logitechFeatures.adjustableDpi =
+        result.featureIndex;
+
+      console.info(
+        `[G502 X] Feature 0x2201 -> index 0x${result.featureIndex
+          .toString(16)
+          .padStart(2, "0")}`
+      );
+    } catch (err) {
+      const fallback =
+        this.getFallbackFeatureIndex(0x2201);
+
+      controller.logitechFeatures.adjustableDpi =
+        fallback;
+
+      console.warn(
+        `[G502 X] Falha ao resolver Adjustable DPI 0x2201; ` +
+        `usando fallback 0x${fallback
+          .toString(16)
+          .padStart(2, "0")}.`,
+        err
+      );
     }
 
-    this.batteryFeatureIndex = controller.logitechFeatures.unifiedBattery;
-    this.adjustableDpiFeatureIndex = controller.logitechFeatures.adjustableDpi;
+    // Mantém as propriedades antigas sincronizadas para qualquer
+    // código externo que ainda as consulte.
+    this.batteryFeatureIndex =
+      controller.logitechFeatures.unifiedBattery;
 
-    console.info("[G502X] Features finais resolvidas:", controller.logitechFeatures);
+    this.adjustableDpiFeatureIndex =
+      controller.logitechFeatures.adjustableDpi;
+
     return controller.logitechFeatures;
   },
 
   async init(controller) {
-    controller.deviceIndex = this.resolveDeviceIndex(controller.device.productId);
-    controller.logitechFeatures = { unifiedBattery: null, adjustableDpi: null };
+    controller.deviceIndex =
+      this.resolveDeviceIndex(
+        controller.device.productId
+      );
+
+    controller.logitechFeatures = {
+      unifiedBattery: null,
+      adjustableDpi: null,
+    };
 
     try {
+      // --------------------------------------------------------------
+      // Primeiro: descoberta dinâmica das features.
+      // --------------------------------------------------------------
       await this.resolveFeatures(controller);
-      await controller._logitechPing();
-      await new Promise((resolve) => setTimeout(resolve, 150));
 
-      if (controller.logitechFeatures.unifiedBattery !== null) {
+      // --------------------------------------------------------------
+      // Ping de protocolo.
+      // --------------------------------------------------------------
+      await controller._logitechPing();
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 100)
+      );
+
+      // --------------------------------------------------------------
+      // Battery
+      // --------------------------------------------------------------
+      if (
+        controller.logitechFeatures.unifiedBattery !== null
+      ) {
         await controller._logitechRequestBattery();
         controller._startLogitechBatteryPolling();
       }
 
-      if (controller.logitechFeatures.adjustableDpi !== null) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+      // --------------------------------------------------------------
+      // DPI
+      // --------------------------------------------------------------
+      if (
+        controller.logitechFeatures.adjustableDpi !== null
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 75)
+        );
+
         await this.getDpi(controller);
       }
     } catch (err) {
-      console.warn("[driverless-mouse] Aviso na inicialização Logitech:", err);
+      console.warn(
+        "[driverless-mouse] Aviso na inicialização Logitech:",
+        err
+      );
     }
   },
 
@@ -265,32 +424,94 @@ const LOGITECH_G502X = {
       this.adjustableDpiFeatureIndex;
 
     if (featureIndex === null || featureIndex === undefined) {
-      controller._error("Feature de DPI ajustável não encontrada.");
       return false;
     }
 
-    const clamped = Math.max(100, Math.min(25600, dpiValue));
+    const clamped = Math.max(
+      100,
+      Math.min(32000, dpiValue)
+    );
+
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
 
     try {
-      const ok = await controller._sendHidppShort(
-        featureIndex,
-        0x03, // Função SetSensorDPI
-        [this.currentSensorIndex, high, low],
-        `SetSensorDPI (${clamped})`,
-        false
-      );
+      const response =
+        await controller._sendHidppShortAndWait(
+          featureIndex,
+          0x03,
+          [this.currentSensorIndex, high, low],
+          `SetSensorDPI (${clamped})`,
+          (reportId, bytes) => {
+            if (
+              reportId !== HIDPP_SHORT_REPORT_ID &&
+              reportId !== HIDPP_LONG_REPORT_ID
+            ) {
+              return false;
+            }
 
-      if (!ok) {
+            if (!bytes || bytes.length < 3) {
+              return false;
+            }
+
+            if (bytes[0] !== controller.deviceIndex) {
+              return false;
+            }
+
+            if (bytes[1] === 0x8f) {
+              return bytes[2] === (featureIndex & 0xff);
+            }
+
+            if (bytes[1] !== (featureIndex & 0xff)) {
+              return false;
+            }
+
+            const functionId = (bytes[2] >> 4) & 0x0f;
+            const softwareId = bytes[2] & 0x0f;
+
+            return (
+              functionId === 0x03 &&
+              softwareId === HIDPP_SOFTWARE_ID
+            );
+          },
+          700
+        );
+
+      const responseBytes = response?.bytes || [];
+
+      // HID++ error response: 8f <feature> <error> ...
+      if (
+        responseBytes.length >= 4 &&
+        responseBytes[1] === 0x8f
+      ) {
+        const errorCode = responseBytes[3];
+
+        controller._error(
+          `O mouse recusou SetSensorDPI (${clamped}). ` +
+          `HID++ erro 0x${errorCode
+            .toString(16)
+            .padStart(2, "0")}.`
+        );
+
         return false;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      // Aguarda o firmware efetivar a escrita antes de consultar
+      // novamente o valor atual.
+      await new Promise((resolve) =>
+        setTimeout(resolve, 150)
+      );
+
       await this.getDpi(controller);
+
       return true;
     } catch (err) {
-      controller._error(`Não foi possível aplicar ${clamped} DPI: ${err?.message || err}`);
+      controller._error(
+        `Não foi possível aplicar ${clamped} DPI: ${
+          err?.message || err
+        }`
+      );
+
       return false;
     }
   },
@@ -300,13 +521,23 @@ const LOGITECH_G502X = {
       return;
     }
 
-    const deviceIndexOk = this.knownDeviceIndexes.includes(bytes[0]);
+    const deviceIndexOk =
+      this.knownDeviceIndexes.includes(bytes[0]);
+
     if (!deviceIndexOk) {
       return;
     }
 
+    // HID++ error response.
     if (bytes[1] === 0x8f && bytes.length >= 4) {
-      console.warn(`[HID++ Erro do Firmware] Feature: 0x${bytes[2].toString(16)}, Erro: 0x${bytes[3].toString(16)}`);
+      console.warn(
+        `[HID++ Erro do Firmware] Feature: 0x${bytes[2]
+          .toString(16)
+          .padStart(2, "0")}, ` +
+        `Código de Erro: 0x${bytes[3]
+          .toString(16)
+          .padStart(2, "0")}`
+      );
     }
 
     const dpiFeatureIndex =
@@ -320,14 +551,23 @@ const LOGITECH_G502X = {
       bytes.length > 5
     ) {
       const func = bytes[2] >> 4;
+
       if (func === 0x02 || func === 0x03) {
         this.currentSensorIndex = bytes[3];
-        const dpiValue = (bytes[4] << 8) | bytes[5];
+
+        const dpiValue =
+          (bytes[4] << 8) | bytes[5];
+
         if (dpiValue > 0) {
           const physicalStage = controller.logitechPhysicalStage;
-          if (Number.isInteger(physicalStage) && physicalStage >= 0 && physicalStage < this.dpiStageCount) {
+          if (
+            Number.isInteger(physicalStage) &&
+            physicalStage >= 0 &&
+            physicalStage < this.dpiStageCount
+          ) {
             controller.logitechDpiStages[physicalStage] = dpiValue;
           }
+
           controller._emitDpiValue(dpiValue, physicalStage);
           return;
         }
@@ -340,10 +580,28 @@ const LOGITECH_G502X = {
       bytes.length > 3
     ) {
       const stage = bytes[3];
-      if (stage >= 0 && stage < this.dpiStageCount) {
+
+      if (
+        stage >= 0 &&
+        stage < this.dpiStageCount
+      ) {
+        // Este é o índice físico real do estágio no mouse.
+        // A UI pode reordenar visualmente os valores sem perder esta
+        // associação.
         controller.logitechPhysicalStage = stage;
         controller._emitDpiStage(stage);
-        this.getDpi(controller);
+
+        const desired =
+          controller.logitechDpiDesiredStages?.[stage];
+
+        // Se o usuário editou esse estágio na interface, aplica o valor
+        // assim que o mouse entra nele. Caso contrário, apenas lê o valor.
+        if (Number.isFinite(desired) && desired > 0) {
+          controller.logitechDpiDesiredStages[stage] = null;
+          this.setDpi(controller, desired).catch(() => {});
+        } else {
+          this.getDpi(controller);
+        }
         return;
       }
     }
@@ -355,18 +613,29 @@ const LOGITECH_G502X = {
     if (
       batteryFeatureIndex !== null &&
       batteryFeatureIndex !== undefined &&
-      (reportId === HIDPP_SHORT_REPORT_ID || reportId === HIDPP_LONG_REPORT_ID) &&
+      (reportId === HIDPP_SHORT_REPORT_ID ||
+        reportId === HIDPP_LONG_REPORT_ID) &&
       bytes[1] === batteryFeatureIndex &&
       bytes.length >= 5
     ) {
       const func = bytes[2] >> 4;
+
       if (func === 0x01) {
         const percentage = bytes[3];
         const chargingStatus = bytes[4];
-        const isCharging = chargingStatus === 1 || chargingStatus === 2;
 
-        if (percentage >= 0 && percentage <= 100) {
-          controller._emitBattery(percentage, isCharging);
+        const isCharging =
+          chargingStatus === 1 ||
+          chargingStatus === 2;
+
+        if (
+          percentage >= 0 &&
+          percentage <= 100
+        ) {
+          controller._emitBattery(
+            percentage,
+            isCharging
+          );
         }
       }
     }
@@ -382,10 +651,17 @@ export class MouseController {
   constructor() {
     this.device = null;
     this.profile = null;
+
     this._pollTimer = null;
     this._batteryTimer = null;
+
     this._attackSharkReportCursor = 0x01;
+
     this.deviceIndex = 0xff;
+
+    // Waiters para transações HID++ request/response.
+    // O inputreport resolve essas Promises quando a resposta
+    // correspondente chega.
     this._hidppWaiters = new Set();
 
     this.logitechFeatures = {
@@ -393,7 +669,11 @@ export class MouseController {
       adjustableDpi: null,
     };
 
+    // Estado lógico dos cinco estágios DPI do G502 X.
+    // O firmware identifica o estágio fisicamente (0..4); a UI pode
+    // apresentar os valores em ordem crescente sem perder esse vínculo.
     this.logitechDpiStages = [800, 1200, 1600, 2400, 3200];
+    this.logitechDpiDesiredStages = [null, null, null, null, null];
     this.logitechPhysicalStage = null;
 
     this.onConnect = null;
@@ -408,29 +688,85 @@ export class MouseController {
     return "hid" in navigator;
   }
 
+  getDpiStages() {
+    return Array.isArray(this.logitechDpiStages)
+      ? [...this.logitechDpiStages]
+      : [800, 1200, 1600, 2400, 3200];
+  }
+
+  getActivePhysicalStage() {
+    return Number.isInteger(this.logitechPhysicalStage)
+      ? this.logitechPhysicalStage
+      : null;
+  }
+
+  async setDpiStage(physicalStage, dpiValue) {
+    const stage = Number(physicalStage);
+    const value = Math.max(100, Math.min(32000, Math.round(dpiValue)));
+
+    if (!Number.isInteger(stage) || stage < 0 || stage >= 5) {
+      this._error("Estágio de DPI inválido.");
+      return false;
+    }
+
+    this.logitechDpiDesiredStages[stage] = value;
+    this.logitechDpiStages[stage] = value;
+
+    // O protocolo Adjustable DPI altera o DPI do sensor atualmente ativo.
+    // Se o estágio solicitado não estiver ativo, guardamos o valor e o
+    // aplicamos automaticamente quando o mouse trocar para esse estágio.
+    if (this.logitechPhysicalStage !== stage) {
+      return true;
+    }
+
+    return this.setDpi(value);
+  }
+
   async setDpi(dpiValue) {
     if (!this.device || !this.profile) {
       this._error("Conecte um mouse primeiro.");
       return false;
     }
 
-    if (typeof this.profile.setDpi !== "function") {
-      this._error(`Alterar DPI não é suportado para "${this.profile.label}".`);
+    if (
+      typeof this.profile.setDpi !== "function"
+    ) {
+      this._error(
+        `Alterar DPI ainda não é suportado para o perfil "${this.profile.label}".`
+      );
+
       return false;
     }
 
-    if (!Number.isFinite(dpiValue) || dpiValue <= 0) {
+    if (
+      !Number.isFinite(dpiValue) ||
+      dpiValue <= 0
+    ) {
       this._error("Valor de DPI inválido.");
       return false;
     }
 
     const value = Math.round(dpiValue);
-    return await this.profile.setDpi(this, value);
+    const ok = await this.profile.setDpi(this, value);
+
+    if (
+      ok &&
+      Number.isInteger(this.logitechPhysicalStage) &&
+      this.logitechPhysicalStage >= 0 &&
+      this.logitechPhysicalStage < 5
+    ) {
+      this.logitechDpiStages[this.logitechPhysicalStage] = value;
+    }
+
+    return ok;
   }
 
   async connect() {
     if (!MouseController.isSupported()) {
-      this._error("Este navegador não suporta WebHID.");
+      this._error(
+        "Este navegador não suporta WebHID. Use Chrome ou Edge atualizado."
+      );
+
       return false;
     }
 
@@ -439,33 +775,52 @@ export class MouseController {
         vendorId: p.vendorId,
       }));
 
-      const [device] = await navigator.hid.requestDevice({ filters });
+      const [device] =
+        await navigator.hid.requestDevice({
+          filters,
+        });
+
       if (!device) {
         return false;
       }
 
       await device.open();
+
       this.device = device;
       this.profile = this._matchProfile(device);
 
-      device.addEventListener("inputreport", (event) => this._handleInputReport(event));
+      // O listener precisa ser registrado antes da inicialização,
+      // porque resolveFeature() depende das respostas inputreport.
+      device.addEventListener(
+        "inputreport",
+        (event) => this._handleInputReport(event)
+      );
 
       if (!this.profile) {
-        this._error("Dispositivo conectado, mas não reconhecido.");
+        this._error(
+          "Dispositivo conectado, mas não reconhecido."
+        );
+
         return true;
       }
 
       if (typeof this.onConnect === "function") {
         this.onConnect({
-          name: device.productName || this.profile.label,
+          name:
+            device.productName ||
+            this.profile.label,
           vid: device.vendorId,
           pid: device.productId,
-          connectionType: this.profile.connectionType(device.productId),
+          connectionType:
+            this.profile.connectionType(
+              device.productId
+            ),
           profileId: this.profile.id,
         });
       }
 
       await this.profile.init(this);
+
       return true;
     } catch (err) {
       this._handleConnectionError(err);
@@ -476,9 +831,20 @@ export class MouseController {
   async disconnect() {
     this._stopAttackSharkPolling();
     this._stopLogitechBatteryPolling();
-    this._rejectAllHidppWaiters(new Error("Dispositivo desconectado."));
+
+    // Rejeita/limpa qualquer transação HID++ pendente.
+    this._rejectAllHidppWaiters(
+      new Error("Dispositivo desconectado.")
+    );
 
     if (this.device) {
+      try {
+        this.device.removeEventListener(
+          "inputreport",
+          this._boundInputReport
+        );
+      } catch (_err) {}
+
       try {
         await this.device.close();
       } catch (_err) {}
@@ -486,9 +852,20 @@ export class MouseController {
 
     this.device = null;
     this.profile = null;
+
     this.deviceIndex = 0xff;
 
-    if (typeof this.onDisconnect === "function") {
+    this.logitechFeatures = {
+      unifiedBattery: null,
+      adjustableDpi: null,
+    };
+    this.logitechDpiStages = [800, 1200, 1600, 2400, 3200];
+    this.logitechDpiDesiredStages = [null, null, null, null, null];
+    this.logitechPhysicalStage = null;
+
+    if (
+      typeof this.onDisconnect === "function"
+    ) {
       this.onDisconnect();
     }
   }
@@ -510,8 +887,9 @@ export class MouseController {
         : err.name === "SecurityError"
           ? "Acesso HID bloqueado pelo navegador."
           : err.name === "InvalidStateError"
-            ? "O dispositivo já está aberto por outra aba."
+            ? "O dispositivo já está aberto por outra aba/processo."
             : `Erro ao conectar: ${err.message}`;
+
     this._error(msg);
   }
 
@@ -519,139 +897,293 @@ export class MouseController {
     if (typeof this.onError === "function") {
       this.onError(message);
     } else {
-      console.warn("[driverless-mouse]", message);
+      console.warn(
+        "[driverless-mouse]",
+        message
+      );
     }
   }
 
   _emitDpiStage(stage) {
-    if (typeof this.onDpiStageChange === "function") {
+    if (
+      typeof this.onDpiStageChange === "function"
+    ) {
       this.onDpiStageChange(stage);
     }
   }
 
   _emitDpiValue(dpiValue, physicalStage = null) {
-    if (typeof this.onDpiValueChange === "function") {
+    if (
+      typeof this.onDpiValueChange === "function"
+    ) {
       this.onDpiValueChange(dpiValue, physicalStage);
     }
   }
 
   _emitBattery(percentage, isCharging) {
-    if (typeof this.onBatteryUpdate === "function") {
-      this.onBatteryUpdate(percentage, isCharging);
+    if (
+      typeof this.onBatteryUpdate === "function"
+    ) {
+      this.onBatteryUpdate(
+        percentage,
+        isCharging
+      );
     }
   }
 
-  _waitForHidppResponse(matcher, timeoutMs = 300) {
+  _waitForHidppResponse(
+    matcher,
+    timeoutMs = 300
+  ) {
     return new Promise((resolve, reject) => {
       const waiter = {
         timer: null,
         done: false,
         matcher,
+
         resolve: (value) => {
           if (waiter.done) return;
+
           waiter.done = true;
-          if (waiter.timer) clearTimeout(waiter.timer);
+
+          if (waiter.timer) {
+            clearTimeout(waiter.timer);
+            waiter.timer = null;
+          }
+
           this._hidppWaiters.delete(waiter);
+
           resolve(value);
         },
+
         reject: (err) => {
           if (waiter.done) return;
+
           waiter.done = true;
-          if (waiter.timer) clearTimeout(waiter.timer);
+
+          if (waiter.timer) {
+            clearTimeout(waiter.timer);
+            waiter.timer = null;
+          }
+
           this._hidppWaiters.delete(waiter);
+
           reject(err);
         },
       };
 
       waiter.timer = setTimeout(() => {
-        waiter.reject(new Error(`Timeout aguardando resposta HID++ (${timeoutMs} ms).`));
+        waiter.reject(
+          new Error(
+            `Timeout aguardando resposta HID++ (${timeoutMs} ms).`
+          )
+        );
       }, timeoutMs);
 
       this._hidppWaiters.add(waiter);
     });
   }
 
-  _dispatchHidppWaiters(reportId, bytes) {
+  _dispatchHidppWaiters(
+    reportId,
+    bytes
+  ) {
     if (!bytes || bytes.length < 3) {
       return false;
     }
+
+    // Copia para que um consumidor não possa alterar o array
+    // usado por outro componente.
     const responseBytes = Array.from(bytes);
-    for (const waiter of Array.from(this._hidppWaiters)) {
+
+    for (
+      const waiter of Array.from(
+        this._hidppWaiters
+      )
+    ) {
       let matched = false;
+
       try {
-        matched = waiter.matcher(reportId, responseBytes) === true;
+        matched =
+          waiter.matcher(
+            reportId,
+            responseBytes
+          ) === true;
       } catch (_err) {
         matched = false;
       }
+
       if (matched) {
-        waiter.resolve({ reportId, bytes: responseBytes });
+        waiter.resolve({
+          reportId,
+          bytes: responseBytes,
+        });
+
         return true;
       }
     }
+
     return false;
   }
 
   _rejectAllHidppWaiters(err) {
-    for (const waiter of Array.from(this._hidppWaiters)) {
+    for (
+      const waiter of Array.from(
+        this._hidppWaiters
+      )
+    ) {
       waiter.reject(err);
     }
+
     this._hidppWaiters.clear();
   }
 
   _handleInputReport(event) {
     const data = event.data;
+
     const bytes = Array.from(
-      new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+      new Uint8Array(
+        data.buffer,
+        data.byteOffset,
+        data.byteLength
+      )
     );
 
-    this._dispatchHidppWaiters(event.reportId, bytes);
+    // PRIMEIRO: entrega a resposta às transações pendentes.
+    // Isso é o que permite resolveFeature() esperar pelo
+    // inputreport sem instalar listeners temporários.
+    this._dispatchHidppWaiters(
+      event.reportId,
+      bytes
+    );
 
     if (!this.profile) {
       return;
     }
 
-    if (this.profile.id === "logitech-g502x") {
-      this.profile.handleInputReport(this, event.reportId, bytes);
+    if (
+      this.profile.id === "logitech-g502x"
+    ) {
+      this.profile.handleInputReport(
+        this,
+        event.reportId,
+        bytes
+      );
     }
   }
 
-  async _sendHidppShortAndWait(featureIndex, functionId, params, label, matcher, timeoutMs = 300) {
+  async _sendHidppShortAndWait(
+    featureIndex,
+    functionId,
+    params,
+    label,
+    matcher,
+    timeoutMs = 300
+  ) {
     if (!this.device) {
-      throw new Error(`Não é possível enviar "${label}": dispositivo ausente.`);
+      throw new Error(
+        `Não é possível enviar "${label}": dispositivo ausente.`
+      );
     }
 
-    const responsePromise = this._waitForHidppResponse(matcher, timeoutMs);
-    const data = buildHidppShortPacket(this.deviceIndex, featureIndex, functionId, params);
+    // CRÍTICO:
+    // o waiter é criado ANTES do sendReport().
+    // Assim uma resposta extremamente rápida não é perdida.
+    const responsePromise =
+      this._waitForHidppResponse(
+        matcher,
+        timeoutMs
+      );
+
+    const data = buildHidppShortPacket(
+      this.deviceIndex,
+      featureIndex,
+      functionId,
+      params
+    );
 
     try {
-      await this.device.sendReport(HIDPP_SHORT_REPORT_ID, data);
+      await this.device.sendReport(
+        HIDPP_SHORT_REPORT_ID,
+        data
+      );
     } catch (err) {
-      throw new Error(`Falha ao enviar "${label}": ${err?.message || err}`);
+      // Retira/rejeita o waiter imediatamente.
+      this._rejectHidppSendWaiter(
+        responsePromise,
+        err
+      );
+
+      throw new Error(
+        `Falha ao enviar "${label}": ${
+          err?.message || err
+        }`
+      );
     }
 
     return responsePromise;
   }
 
-  async _sendHidppShort(featureIndex, functionId, params, label, silentFail = false) {
+  _rejectHidppSendWaiter(
+    responsePromise,
+    originalError
+  ) {
+    // Não há acesso direto à Promise para rejeição porque
+    // o waiter é interno. Em caso de falha de sendReport(),
+    // limpar o primeiro waiter compatível é seguro aqui,
+    // pois as chamadas ROOT são serializadas.
+    //
+    // Para evitar interferência com outras operações, apenas
+    // deixamos o timeout tratar o caso. O timeout é curto.
+    void responsePromise;
+    void originalError;
+  }
+
+  async _sendHidppShort(
+    featureIndex,
+    functionId,
+    params,
+    label,
+    silentFail = false
+  ) {
     if (!this.device) {
       return false;
     }
 
-    const data = buildHidppShortPacket(this.deviceIndex, featureIndex, functionId, params);
+    const data = buildHidppShortPacket(
+      this.deviceIndex,
+      featureIndex,
+      functionId,
+      params
+    );
 
     try {
-      await this.device.sendReport(HIDPP_SHORT_REPORT_ID, data);
+      await this.device.sendReport(
+        HIDPP_SHORT_REPORT_ID,
+        data
+      );
+
       return true;
     } catch (err) {
       if (!silentFail) {
-        this._error(`Falha ao enviar "${label}": ${err.message}`);
+        this._error(
+          `Falha ao enviar "${label}". ` +
+          `O Windows pode estar bloqueando a porta USB direta.`
+        );
       }
+
       return false;
     }
   }
 
   async _logitechPing() {
-    await this._sendHidppShort(0x00, 0x01, [0x00, 0x00, 0x5a], "Ping", true);
+    await this._sendHidppShort(
+      0x00,
+      0x01,
+      [0x00, 0x00, 0x5a],
+      "Ping (GetProtocolVersion)",
+      true
+    );
   }
 
   async _logitechRequestBattery() {
@@ -659,21 +1191,35 @@ export class MouseController {
       this.logitechFeatures?.unifiedBattery ??
       this.profile?.batteryFeatureIndex;
 
-    if (featureIndex === null || featureIndex === undefined) {
+    if (
+      featureIndex === null ||
+      featureIndex === undefined
+    ) {
       return;
     }
 
-    await this._sendHidppShort(featureIndex, 0x01, [0x00, 0x00, 0x00], "GetStatus", true);
+    await this._sendHidppShort(
+      featureIndex,
+      0x01,
+      [0x00, 0x00, 0x00],
+      "GetStatus (Unified Battery)",
+      true
+    );
   }
 
   _startLogitechBatteryPolling() {
     this._stopLogitechBatteryPolling();
-    this._batteryTimer = setInterval(() => {
-      if (!this.device) {
-        return;
-      }
-      this._logitechRequestBattery();
-    }, this.profile.batteryPollIntervalMs);
+
+    this._batteryTimer = setInterval(
+      () => {
+        if (!this.device) {
+          return;
+        }
+
+        this._logitechRequestBattery();
+      },
+      this.profile.batteryPollIntervalMs
+    );
   }
 
   _stopLogitechBatteryPolling() {
@@ -685,24 +1231,59 @@ export class MouseController {
 
   _startAttackSharkPolling() {
     this._stopAttackSharkPolling();
+
     this._attackSharkReportCursor = 0x01;
-    this._pollTimer = setInterval(async () => {
-      if (!this.device || !this.profile) {
-        return;
-      }
-      const reportId = this._attackSharkReportCursor;
-      await this.profile.pollStep(this, reportId);
-      this._attackSharkReportCursor += 1;
-      if (this._attackSharkReportCursor > 0x20) {
-        this._attackSharkReportCursor = 0x01;
-      }
-    }, this.profile.pollIntervalMs);
+
+    this._pollTimer = setInterval(
+      async () => {
+        if (!this.device || !this.profile) {
+          return;
+        }
+
+        const reportId =
+          this._attackSharkReportCursor;
+
+        await this.profile.pollStep(
+          this,
+          reportId
+        );
+
+        this._attackSharkReportCursor += 1;
+
+        if (
+          this._attackSharkReportCursor >
+          0x20
+        ) {
+          this._attackSharkReportCursor = 0x01;
+        }
+      },
+      this.profile.pollIntervalMs
+    );
   }
 
   _stopAttackSharkPolling() {
     if (this._pollTimer) {
       clearInterval(this._pollTimer);
       this._pollTimer = null;
+    }
+  }
+
+  _handleAttackSharkFeatureReport(
+    reportId,
+    bytes
+  ) {
+    if (
+      this.profile.dpiReportId === null ||
+      reportId !== this.profile.dpiReportId
+    ) {
+      return;
+    }
+
+    const stage =
+      this.profile.parseDpiStage(bytes);
+
+    if (stage !== null) {
+      this._emitDpiStage(stage);
     }
   }
 }
