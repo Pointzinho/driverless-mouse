@@ -14,6 +14,14 @@ function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
   return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
 }
 
+// ADIÇÃO: Função para construir o envelope longo (16 bytes de espaço)
+function buildHidppLongPacket(deviceIndex, featureIndex, functionId, params) {
+  const p = new Array(16).fill(0);
+  (params || []).forEach((v, i) => { if (i < 16) p[i] = v & 0xff; });
+  const funcByte = ((functionId & 0x0f) << 4) | (HIDPP_SOFTWARE_ID & 0x0f);
+  return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
+}
+
 const ATTACK_SHARK_V3 = {
   id: "attack-shark-v3",
   label: "Attack Shark V3",
@@ -103,11 +111,9 @@ const LOGITECH_G502X = {
   async init(controller) {
     controller.deviceIndex = this.resolveDeviceIndex(controller.device.productId);
     
-    // CORREÇÃO: Acorda o mouse com Ping ANTES de perguntar pelas features
     await controller._logitechPing();
     await new Promise((r) => setTimeout(r, 250));
 
-    // Resolve as features dinamicamente
     this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201);
     this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004);
 
@@ -124,7 +130,6 @@ const LOGITECH_G502X = {
 
   async getDpi(controller) {
     if (this.adjustableDpiFeatureIndex === null) return;
-    // CORREÇÃO: Passar 0x00 como param1 (Sensor Index 0)
     await controller._sendHidppShort(
       this.adjustableDpiFeatureIndex,
       0x01, 
@@ -140,11 +145,12 @@ const LOGITECH_G502X = {
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
     
-    // CORREÇÃO: Passar 0x00 como param1 (Sensor Index 0)
-    const ok = await controller._sendHidppShort(
+    // CORREÇÃO: Enviamos pelo Envelope Longo os 5 bytes exigidos!
+    // [0x00 (Sensor Index), X High, X Low, Y High, Y Low]
+    const ok = await controller._sendHidppLong(
       this.adjustableDpiFeatureIndex,
       0x02,
-      [0x00, high, low],
+      [0x00, high, low, high, low],
       `SetSensorDPI (${clamped})`
     );
     
@@ -162,7 +168,6 @@ const LOGITECH_G502X = {
     if (deviceIndexOk && this.adjustableDpiFeatureIndex !== null && bytes[1] === this.adjustableDpiFeatureIndex && bytes.length > 5) {
       const func = bytes[2] >> 4;
       if (func === 0x01 || func === 0x02) {
-        // CORREÇÃO: Lê os bytes [4] e [5] porque o byte [3] agora é o Sensor Index
         const dpiValue = (bytes[4] << 8) | bytes[5];
         if (dpiValue > 0) {
           controller._emitDpiValue(dpiValue);
@@ -171,7 +176,7 @@ const LOGITECH_G502X = {
       }
     }
 
-    // Notificação de troca de estágio de DPI
+    // Notificação de troca de estágio de DPI via botão
     if (deviceIndexOk && reportId === HIDPP_LONG_REPORT_ID && bytes[1] === this.dpiEventFeatureIndex && bytes.length > 3) {
       const stage = bytes[3];
       if (stage >= 0 && stage < this.dpiStageCount) {
@@ -184,7 +189,6 @@ const LOGITECH_G502X = {
     // Bateria
     if (deviceIndexOk && this.batteryFeatureIndex !== null && (reportId === HIDPP_SHORT_REPORT_ID || reportId === HIDPP_LONG_REPORT_ID) && bytes[1] === this.batteryFeatureIndex) {
       const func = bytes[2] >> 4;
-      // CORREÇÃO: Só lê se for a resposta de GetStatus (0x01)
       if (func === 0x01) { 
         const percentage = bytes[3]; 
         const chargingStatus = bytes[4]; 
@@ -362,7 +366,20 @@ export class MouseController {
       await this.device.sendReport(HIDPP_SHORT_REPORT_ID, data);
       return true;
     } catch (err) {
-      this._error(`Falha ao enviar "${label}": interface ocupada. Feche o Logitech G HUB.`);
+      this._error(`Falha ao enviar "${label}". Feche o Logitech G HUB.`);
+      return false;
+    }
+  }
+
+  // ADIÇÃO: Envia o Envelope Longo (0x11)
+  async _sendHidppLong(featureIndex, functionId, params, label) {
+    if (!this.device) return false;
+    const data = buildHidppLongPacket(this.deviceIndex, featureIndex, functionId, params);
+    try {
+      await this.device.sendReport(HIDPP_LONG_REPORT_ID, data);
+      return true;
+    } catch (err) {
+      this._error(`Falha ao enviar "${label}". Feche o Logitech G HUB.`);
       return false;
     }
   }
@@ -375,7 +392,7 @@ export class MouseController {
     if (this.profile.batteryFeatureIndex === null) return;
     await this._sendHidppShort(
       this.profile.batteryFeatureIndex,
-      0x01, // CORREÇÃO: Chama a função 0x01 para buscar o status, não 0x00
+      0x01, 
       [0x00, 0x00, 0x00],
       "GetStatus (Unified Battery)"
     );
