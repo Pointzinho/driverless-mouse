@@ -868,17 +868,34 @@
       return;
     }
 
-    const targetStage = Number.isInteger(editingPhysicalStage)
-      ? editingPhysicalStage
-      : (Number.isInteger(activePhysicalStage) ? activePhysicalStage : 0);
+    // 0x2201/SetSensorDPI altera o sensor atualmente ativo.
+    // Portanto, o botão/Enter deve sempre aplicar ao estágio físico
+    // que o mouse está usando neste momento.
+    const targetStage = Number.isInteger(activePhysicalStage)
+      ? activePhysicalStage
+      : editingPhysicalStage;
+
+    if (!Number.isInteger(targetStage) ||
+        targetStage < 0 ||
+        targetStage >= DPI_STAGE_COUNT) {
+      showNotice("Ainda não foi possível identificar o estágio físico ativo do mouse.");
+      return;
+    }
 
     els.btnApplyDpi.disabled = true;
     els.btnApplyDpi.textContent = "Aplicando...";
 
     try {
-      // Só aqui o valor é enviado ao mouse.
+      const ok = await controller.setDpi(value);
+
+      if (!ok) {
+        return;
+      }
+
+      // Só atualiza o estágio depois que o controller confirmou
+      // a transação SetSensorDPI.
       dpiStages[targetStage] = value;
-      await controller.setDpiStage(targetStage, value);
+      editingPhysicalStage = targetStage;
       pendingDpi = null;
       els.dpiInput.value = value;
       updateStageUI();

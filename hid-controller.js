@@ -435,23 +435,85 @@ const LOGITECH_G502X = {
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
 
-    const ok = await controller._sendHidppShort(
-      featureIndex,
-      0x03,
-      [this.currentSensorIndex, high, low],
-      `SetSensorDPI (${clamped})`,
-      false
-    );
+    try {
+      const response =
+        await controller._sendHidppShortAndWait(
+          featureIndex,
+          0x03,
+          [this.currentSensorIndex, high, low],
+          `SetSensorDPI (${clamped})`,
+          (reportId, bytes) => {
+            if (
+              reportId !== HIDPP_SHORT_REPORT_ID &&
+              reportId !== HIDPP_LONG_REPORT_ID
+            ) {
+              return false;
+            }
 
-    if (ok) {
+            if (!bytes || bytes.length < 3) {
+              return false;
+            }
+
+            if (bytes[0] !== controller.deviceIndex) {
+              return false;
+            }
+
+            if (bytes[1] === 0x8f) {
+              return bytes[2] === (featureIndex & 0xff);
+            }
+
+            if (bytes[1] !== (featureIndex & 0xff)) {
+              return false;
+            }
+
+            const functionId = (bytes[2] >> 4) & 0x0f;
+            const softwareId = bytes[2] & 0x0f;
+
+            return (
+              functionId === 0x03 &&
+              softwareId === HIDPP_SOFTWARE_ID
+            );
+          },
+          700
+        );
+
+      const responseBytes = response?.bytes || [];
+
+      // HID++ error response: 8f <feature> <error> ...
+      if (
+        responseBytes.length >= 4 &&
+        responseBytes[1] === 0x8f
+      ) {
+        const errorCode = responseBytes[3];
+
+        controller._error(
+          `O mouse recusou SetSensorDPI (${clamped}). ` +
+          `HID++ erro 0x${errorCode
+            .toString(16)
+            .padStart(2, "0")}.`
+        );
+
+        return false;
+      }
+
+      // Aguarda o firmware efetivar a escrita antes de consultar
+      // novamente o valor atual.
       await new Promise((resolve) =>
-        setTimeout(resolve, 250)
+        setTimeout(resolve, 150)
       );
 
       await this.getDpi(controller);
-    }
 
-    return ok;
+      return true;
+    } catch (err) {
+      controller._error(
+        `Não foi possível aplicar ${clamped} DPI: ${
+          err?.message || err
+        }`
+      );
+
+      return false;
+    }
   },
 
   handleInputReport(controller, reportId, bytes) {
