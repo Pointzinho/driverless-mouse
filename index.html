@@ -696,68 +696,9 @@
               title="Arraste para escolher o DPI. Enter ou Aplicar DPI confirma."></span>
       </div>`;
 
-    const marker = dpiMarkers.querySelector(".dpi-marker");
-    const point = marker?.querySelector(".dpi-marker-point");
+    // Os eventos do slider ficam fora de updateStageUI().
+    // Assim, atualizar a bolinha durante o arraste não recria listeners.
 
-    // O arraste não fica preso à bolinha. O usuário pode clicar/começar
-    // o arraste em qualquer ponto da área da barra e continuar movendo
-    // livremente para a esquerda/direita, mesmo que o cursor saia da linha.
-    const sliderWrap = document.getElementById("dpi-slider-wrap");
-
-    if (sliderWrap) {
-      const updateFromPointer = (event) => {
-        if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
-
-        const rect = sliderWrap.getBoundingClientRect();
-        const usableWidth = Math.max(1, rect.width - 20);
-
-        // A posição é calculada apenas pelo X. A altura do cursor não
-        // importa: acima, em cima ou abaixo da linha continua funcionando.
-        const percent =
-          ((event.clientX - rect.left - 10) / usableWidth) * 100;
-
-        // IMPORTANTE: arrastar NÃO envia nada para o mouse.
-        // Apenas atualiza o valor pendente e o campo de texto.
-        setPendingDpi(percentToDpi(percent));
-      };
-
-      sliderWrap.addEventListener("pointerdown", (event) => {
-        // Só botão principal do mouse/toque.
-        if (event.pointerType === "mouse" && event.button !== 0) return;
-
-        event.preventDefault();
-
-        draggingStage = {
-          physical: editingStage,
-          pointerId: event.pointerId
-        };
-
-        sliderWrap.setPointerCapture?.(event.pointerId);
-        updateFromPointer(event);
-      });
-
-      sliderWrap.addEventListener("pointermove", updateFromPointer);
-
-      const stopDragging = (event) => {
-        if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
-
-        draggingStage = null;
-
-        try {
-          sliderWrap.releasePointerCapture?.(event.pointerId);
-        } catch (_) {
-          // O capture pode já ter sido liberado pelo navegador.
-        }
-
-        // Nenhuma chamada HID aqui. Só Enter ou "Aplicar DPI" confirma.
-      };
-
-      sliderWrap.addEventListener("pointerup", stopDragging);
-      sliderWrap.addEventListener("pointercancel", stopDragging);
-      sliderWrap.addEventListener("lostpointercapture", () => {
-        draggingStage = null;
-      });
-    }
 
     const activeItem = ordered.findIndex(
       item => item.physicalStage === activePhysicalStage
@@ -769,6 +710,80 @@
   }
 
   updateStageUI();
+
+  // Um único conjunto de listeners para a barra inteira.
+  // O arraste pode começar em qualquer ponto da área da barra e a
+  // posição vertical do cursor não interfere.
+  const sliderWrap = document.getElementById("dpi-slider-wrap");
+
+  function updateSliderFromPointer(event) {
+    if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
+
+    const rect = sliderWrap.getBoundingClientRect();
+    const usableWidth = Math.max(1, rect.width - 20);
+    const percent = Math.max(
+      0,
+      Math.min(
+        100,
+        ((event.clientX - rect.left - 10) / usableWidth) * 100
+      )
+    );
+
+    const value = percentToDpi(percent);
+
+    // NÃO chama updateStageUI() durante o movimento.
+    // Isso evita reconstruir o DOM e travar a página.
+    pendingDpi = value;
+    els.dpiInput.value = value;
+
+    const marker = dpiMarkers.querySelector(".dpi-marker");
+    if (marker) {
+      marker.style.left = `${dpiToPercent(value)}%`;
+      marker.classList.add("pending");
+
+      const label = marker.querySelector(".dpi-marker-label");
+      if (label) label.textContent = value;
+    }
+  }
+
+  if (sliderWrap) {
+    sliderWrap.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+
+      event.preventDefault();
+
+      draggingStage = {
+        physical: Number.isInteger(editingPhysicalStage)
+          ? editingPhysicalStage
+          : 0,
+        pointerId: event.pointerId
+      };
+
+      sliderWrap.setPointerCapture?.(event.pointerId);
+      updateSliderFromPointer(event);
+    });
+
+    sliderWrap.addEventListener("pointermove", updateSliderFromPointer);
+
+    const stopSliderDrag = (event) => {
+      if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
+
+      draggingStage = null;
+
+      try {
+        sliderWrap.releasePointerCapture?.(event.pointerId);
+      } catch (_) {}
+
+      // Arrastar apenas prepara o valor.
+      // Enter ou "Aplicar DPI" continua sendo necessário para enviar HID++.
+    };
+
+    sliderWrap.addEventListener("pointerup", stopSliderDrag);
+    sliderWrap.addEventListener("pointercancel", stopSliderDrag);
+    sliderWrap.addEventListener("lostpointercapture", () => {
+      draggingStage = null;
+    });
+  }
 
   function showNotice(message) {
     els.notice.textContent = message;
