@@ -14,7 +14,6 @@ function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
   return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
 }
 
-// ADIÇÃO: Função para construir o envelope longo (16 bytes de espaço)
 function buildHidppLongPacket(deviceIndex, featureIndex, functionId, params) {
   const p = new Array(16).fill(0);
   (params || []).forEach((v, i) => { if (i < 16) p[i] = v & 0xff; });
@@ -130,9 +129,10 @@ const LOGITECH_G502X = {
 
   async getDpi(controller) {
     if (this.adjustableDpiFeatureIndex === null) return;
+    // CORREÇÃO: Função 0x02 é a verdadeira GetSensorDPI
     await controller._sendHidppShort(
       this.adjustableDpiFeatureIndex,
-      0x01, 
+      0x02, 
       [0x00, 0x00, 0x00], 
       "GetSensorDPI"
     );
@@ -145,11 +145,10 @@ const LOGITECH_G502X = {
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
     
-    // CORREÇÃO: Enviamos pelo Envelope Longo os 5 bytes exigidos!
-    // [0x00 (Sensor Index), X High, X Low, Y High, Y Low]
+    // CORREÇÃO: Função 0x03 é a verdadeira SetSensorDPI
     const ok = await controller._sendHidppLong(
       this.adjustableDpiFeatureIndex,
-      0x02,
+      0x03,
       [0x00, high, low, high, low],
       `SetSensorDPI (${clamped})`
     );
@@ -167,7 +166,8 @@ const LOGITECH_G502X = {
     // Resposta de leitura/escrita de DPI numérico
     if (deviceIndexOk && this.adjustableDpiFeatureIndex !== null && bytes[1] === this.adjustableDpiFeatureIndex && bytes.length > 5) {
       const func = bytes[2] >> 4;
-      if (func === 0x01 || func === 0x02) {
+      // Validamos respostas de Get (0x02) ou de Sucesso no Set (0x03)
+      if (func === 0x02 || func === 0x03) {
         const dpiValue = (bytes[4] << 8) | bytes[5];
         if (dpiValue > 0) {
           controller._emitDpiValue(dpiValue);
@@ -371,7 +371,6 @@ export class MouseController {
     }
   }
 
-  // ADIÇÃO: Envia o Envelope Longo (0x11)
   async _sendHidppLong(featureIndex, functionId, params, label) {
     if (!this.device) return false;
     const data = buildHidppLongPacket(this.deviceIndex, featureIndex, functionId, params);
