@@ -1,56 +1,65 @@
 # 🖱️ Driverless Mouse
 
-> **Universal WebHID Control Panel for Gaming Mice**  
-> Uma interface web portátil e leve para configurar DPI, Polling Rate e preferências de mouses gamer diretamente do navegador, sem instalar drivers ou necessitar de permissão de administrador.
+> **Painel de Controle Universal WebHID para Mouses Gamer**
 
----
-
-## 📌 Sobre o Projeto
-
-Em ambientes corporativos ou computadores restritos por políticas de TI, a instalação de softwares e drivers proprietários (como Logitech G HUB, drivers BKM/Attack Shark, etc.) costuma ser bloqueada por exigir privilégios de administrador.
-
-O **Driverless Mouse** resolve esse problema utilizando a API nativa **WebHID** presente no Google Chrome e Microsoft Edge. Com ele, você consegue comunicar-se via USB/Dongle diretamente com a memória onboard do mouse sem precisar baixar ou instalar nenhum arquivo `.exe`.
-
----
+Uma interface leve, rápida e **100% portátil** para configurar DPI e verificar a bateria do seu mouse gamer diretamente pelo navegador ou via arquivo executável offline. Tudo isso sem precisar instalar softwares pesados de fabricantes e sem exigir privilégios de administrador.
 
 ## ✨ Funcionalidades
 
-* 🚀 **Zero Instalação:** Funciona 100% via web pelo navegador.
-* 🛡️ **Sem Privilégios de Admin:** Não dispara alertas do Windows nem requer senhas de administrador.
-* 🎯 **Ajuste de DPI:** Altere os perfis de sensibilidade gravados no hardware.
-* ⚡ **Polling Rate:** Alterne taxas de atualização (125Hz, 500Hz, 1000Hz).
-* 🔄 **Suporte Multimarca:** Projetado para reconhecer dispositivos **Attack Shark** e **Logitech**.
-* 💾 **Memória Onboard:** As alterações feitas via WebHID permanecem gravadas diretamente na memória interna do mouse.
+* **Sem Instalação:** Rode direto pelo Google Chrome/Edge via WebHID ou baixe o executável portátil (`.exe`).
+* **Configuração de DPI:** Altere os estágios de DPI do seu mouse em tempo real com uma interface visual arrastável.
+* **Monitoramento de Bateria:** Leitura direta do hardware informando a porcentagem exata e o status de carregamento.
+* **Auto-Detecção:** Identifica automaticamente se o mouse está conectado via Cabo USB ou Dongle sem fio.
 
----
+## 🖱️ Dispositivos Suportados
 
-## 🛠️ Tecnologias Utilizadas
+| Mouse | Status | Conexões Suportadas |
+| :--- | :---: | :--- |
+| **Logitech G502 X LIGHTSPEED** | 🟢 Suportado | Cabo USB & Dongle (LIGHTSPEED) |
+| **Attack Shark V3** | 🟢 Suportado | Cabo USB & Dongle (2.4GHz) |
 
-* **HTML5 / CSS3 / JavaScript (ES6+)**
-* **WebHID API** (Comunicação USB em user-space)
-* **GitHub Pages** (Hospedagem e deploy contínuo)
-
----
+*Nota: Mouses da Logitech com pareamento via receptor unificado podem necessitar de ajustes no Device Index.*
 
 ## 🚀 Como Usar
 
-1. Conecte seu mouse no computador via cabo USB ou Dongle 2.4GHz.
-2. Abra um navegador compatível (**Google Chrome** ou **Microsoft Edge**).
-3. Acesse a aplicação online no link do projeto.
-4. Clique em **Conectar Mouse USB** e selecione seu dispositivo na caixa de diálogo nativa do navegador.
-5. Ajuste as configurações desejadas e clique em **Aplicar Configurações**.
+Você tem duas formas de utilizar o Driverless Mouse:
 
----
+### Opção 1: Aplicativo Portátil (Recomendado)
+Para uma experiência nativa e offline:
+1. Vá até a aba [Releases](../../releases) do repositório.
+2. Baixe o arquivo `DrivelessMouse_Beta.exe`.
+3. Dê um duplo clique para abrir e clique em **Conectar Mouse**.
 
-## 🔌 Dispositivos Mapeados / Em Desenvolvimento
+### Opção 2: Direto pelo Navegador
+1. Acesse o link do projeto hospedado (se configurado no GitHub Pages) usando Google Chrome, Microsoft Edge ou Opera.
+2. Clique em **Conectar Mouse**.
+3. Na janela do navegador que se abrir, selecione a interface correspondente ao seu mouse (geralmente a que possui o nome do dispositivo ou do Dongle).
 
-| Marca | Modelo | Suporte |
-| :--- | :--- | :---: |
-| **Attack Shark** | V3 | 🟡 Em Testes |
-| **Logitech** | Séries G (G203, G305, etc.) | 🟡 Em Testes |
+## 🛠️ Solução de Problemas (Troubleshooting)
 
----
+**Erro "Failed to write the report" no G502 X (Ghost Lock)**
+Se o mouse não estiver salvando o DPI, ele pode estar com a Memória Integrada bloqueada pelo software oficial da Logitech (G HUB). Para destravar:
+1. Abra o Logitech G HUB.
+2. Ative o "Modo de Memória Integrada" e clique em **Restaurar configurações originais** no perfil.
+3. Conecte o mouse via Cabo USB, desligue a chave física embaixo dele e ligue novamente.
+4. Desconecte o cabo, volte para o Dongle sem fio e **feche completamente o G HUB** (verifique a bandeja do sistema).
+5. Abra o Driverless Mouse novamente.
 
-## 📄 Licença
+## 💻 Para Desenvolvedores (Como compilar o `.exe`)
 
-Distribuído sob a licença MIT. Veja `LICENSE` para mais informações.
+Este projeto utiliza **Electron** para gerar o executável portátil.
+
+**Pré-requisitos:** Node.js instalado.
+
+```bash
+# 1. Clone o repositório
+git clone [https://github.com/Pointzinho/driverless-mouse.git](https://github.com/Pointzinho/driverless-mouse.git)
+
+# 2. Instale as dependências
+npm install
+
+# 3. Teste o aplicativo em ambiente de desenvolvimento
+npm run start
+
+# 4. Compile o executável para Windows (Gera a pasta /dist)
+npm run build
