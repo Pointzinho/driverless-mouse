@@ -250,42 +250,138 @@
   }
   #battery-bar-fill.low { background: linear-gradient(90deg, var(--danger), #ff8a8a); }
 
-  /* Card de estágio de DPI */
+  /* ---------------- Editor de estágios DPI ---------------- */
+  #dpi-control-card { display: flex; flex-direction: column; gap: 18px; }
   #dpi-stage-label {
     font-family: var(--mono);
     font-size: 13px;
     color: var(--text-dim);
-    margin-bottom: 14px;
+    margin: 0;
   }
   #dpi-stage-label b { color: var(--text); }
+
   #dpi-dots {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 8px;
   }
   .dpi-dot {
-    flex: 1;
-    height: 40px;
-    border-radius: 8px;
+    min-width: 0;
+    height: 48px;
+    border-radius: 9px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 2px;
     font-family: var(--mono);
-    font-size: 12px;
-    color: var(--text-faint);
-    transition: all 0.25s ease;
+    color: var(--text-dim);
+    transition: all 0.2s ease;
+    cursor: pointer;
   }
+  .dpi-dot .stage-number { font-size: 10px; color: var(--text-faint); }
+  .dpi-dot .stage-value { font-size: 12px; font-weight: 700; color: inherit; }
   .dpi-dot.active {
     background: var(--signal-soft);
     border-color: var(--signal);
     color: var(--signal);
-    font-weight: 700;
     transform: translateY(-2px);
   }
+  .dpi-dot.active .stage-number { color: var(--signal); }
 
-  /* Card de controle ativo de DPI (full width) */
-  #dpi-control-card { display: flex; flex-direction: column; gap: 18px; }
+  #dpi-slider-wrap {
+    position: relative;
+    padding: 58px 10px 34px;
+    user-select: none;
+    touch-action: none;
+  }
+  #dpi-slider-track {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    top: 76px;
+    height: 4px;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--text-faint), #87949a);
+  }
+  #dpi-slider-ticks {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    top: 69px;
+    height: 18px;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(
+        to right,
+        transparent 0,
+        transparent 9px,
+        rgba(124,143,151,.45) 9px,
+        rgba(124,143,151,.45) 11px
+      );
+    opacity: .7;
+  }
+  .dpi-marker {
+    position: absolute;
+    top: 45px;
+    width: 0;
+    height: 64px;
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .dpi-marker-label {
+    position: absolute;
+    left: 50%;
+    bottom: 49px;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .dpi-marker-point {
+    position: absolute;
+    left: 50%;
+    top: 24px;
+    width: 22px;
+    height: 22px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 3px solid var(--bg-card);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.16);
+    cursor: grab;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .dpi-marker-point:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.12); }
+  .dpi-marker.active .dpi-marker-point {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    transform: translate(-50%, -50%) rotate(45deg);
+    box-shadow: 0 0 0 2px var(--signal), 0 0 18px rgba(255,176,0,.22);
+  }
+  .dpi-marker.active .dpi-marker-label { font-size: 14px; }
+
+  .dpi-scale {
+    position: absolute;
+    top: 96px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    transform: translateX(-50%);
+  }
+  .dpi-scale.left { left: 10px; transform: none; }
+  .dpi-scale.right { right: 10px; left: auto; transform: none; }
+
+  #dpi-edit-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+    padding-top: 4px;
+  }
   #dpi-current-row {
     display: flex;
     align-items: baseline;
@@ -302,14 +398,16 @@
     font-size: 13px;
     color: var(--text-dim);
   }
-  #dpi-apply-row {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
+  #dpi-input-group { display: flex; flex-direction: column; gap: 6px; }
+  #dpi-input-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
   }
+  #dpi-apply-row { display: flex; gap: 10px; }
   #dpi-input {
-    flex: 1;
-    min-width: 160px;
+    width: 100%;
+    min-width: 180px;
     font-family: var(--mono);
     font-size: 15px;
     background: var(--bg-elev);
@@ -319,7 +417,22 @@
     padding: 12px 14px;
   }
   #dpi-input:focus { outline: none; border-color: var(--signal); }
-  #btn-apply-dpi { padding: 12px 22px; }
+  #btn-apply-dpi { padding: 12px 22px; white-space: nowrap; }
+  #dpi-help {
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    font-size: 12px;
+    text-align: center;
+  }
+  #dpi-help b { color: var(--text); }
+  @media (max-width: 700px) {
+    #dpi-edit-row { grid-template-columns: 1fr; }
+    #dpi-dots { gap: 5px; }
+    .dpi-dot { height: 44px; }
+  }
 
 
   /* Aviso amigável */
@@ -407,14 +520,35 @@
     </div>
 
     <div class="card" id="dpi-control-card">
-      <p class="card-label">DPI do perfil ativo</p>
-      <div id="dpi-current-row">
-        <span id="dpi-current-value">—</span>
-        <span id="dpi-current-unit">DPI</span>
+      <p class="card-label">Velocidades de DPI</p>
+      <p id="dpi-stage-label">Perfil ativo: <b>Estágio 1 de 5</b></p>
+
+      <div id="dpi-dots"></div>
+
+      <div id="dpi-slider-wrap" aria-label="Editor das cinco velocidades de DPI">
+        <div id="dpi-slider-track"></div>
+        <div id="dpi-slider-ticks"></div>
+        <div class="dpi-scale left">100</div>
+        <div class="dpi-scale right">25600</div>
+        <div id="dpi-markers"></div>
       </div>
-      <div id="dpi-apply-row">
-        <input id="dpi-input" type="number" min="100" max="32000" step="50" placeholder="ex: 1600" />
-        <button id="btn-apply-dpi" class="primary">Aplicar DPI</button>
+
+      <div id="dpi-edit-row">
+        <div id="dpi-current-row">
+          <span id="dpi-current-value">—</span>
+          <span id="dpi-current-unit">DPI atual</span>
+        </div>
+        <div id="dpi-input-group">
+          <label id="dpi-input-label" for="dpi-input">Novo valor de DPI</label>
+          <div id="dpi-apply-row">
+            <input id="dpi-input" type="number" min="100" max="32000" step="50" placeholder="ex: 1600" />
+            <button id="btn-apply-dpi" class="primary">Aplicar DPI</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="dpi-help">
+        <b>Arraste os pontos coloridos</b> para ajustar os estágios. Você também pode digitar um valor e clicar em <b>Aplicar DPI</b>.
       </div>
     </div>
   </div>
@@ -449,12 +583,119 @@
   };
 
   const DPI_STAGE_COUNT = 5;
+  const DPI_COLORS = ["#ffffff", "#ff7a00", "#35d6c5", "#ffe600", "#d53cff"];
+  const DPI_DEFAULTS = [800, 1200, 1600, 2400, 3200];
+  let dpiStages = [...DPI_DEFAULTS];
+  let activePhysicalStage = null;
+  let activeSortedStage = 0;
+  let draggingStage = null;
+
   els.dpiDots.innerHTML = Array.from({ length: DPI_STAGE_COUNT })
-    .map((_, i) => `<div class="dpi-dot" data-stage="${i}">${i + 1}</div>`)
+    .map((_, i) => `<div class="dpi-dot" data-slot="${i}">
+      <span class="stage-number">ESTÁGIO ${i + 1}</span>
+      <span class="stage-value">— DPI</span>
+    </div>`)
     .join("");
   const dpiDotEls = Array.from(els.dpiDots.querySelectorAll(".dpi-dot"));
+  const dpiMarkers = document.getElementById("dpi-markers");
 
   const controller = new MouseController();
+
+  function clampDpi(value) {
+    return Math.max(100, Math.min(32000, Math.round(Number(value) || 100)));
+  }
+
+  function sortedStages() {
+    return dpiStages
+      .map((value, physicalStage) => ({ value: clampDpi(value), physicalStage }))
+      .sort((a, b) => a.value - b.value || a.physicalStage - b.physicalStage);
+  }
+
+  function dpiToPercent(dpi) {
+    const min = Math.log(100);
+    const max = Math.log(25600);
+    return ((Math.log(clampDpi(dpi)) - min) / (max - min)) * 100;
+  }
+
+  function percentToDpi(percent) {
+    const min = Math.log(100);
+    const max = Math.log(25600);
+    const ratio = Math.max(0, Math.min(1, percent / 100));
+    const raw = Math.exp(min + ratio * (max - min));
+    return Math.round(raw / 50) * 50;
+  }
+
+  function updateStageUI() {
+    const ordered = sortedStages();
+
+    dpiDotEls.forEach((el, sortedIndex) => {
+      const item = ordered[sortedIndex];
+      el.querySelector(".stage-number").textContent = `ESTÁGIO ${sortedIndex + 1}`;
+      el.querySelector(".stage-value").textContent = `${item.value} DPI`;
+      el.style.color = DPI_COLORS[sortedIndex];
+      el.style.borderColor = item.physicalStage === activePhysicalStage
+        ? DPI_COLORS[sortedIndex]
+        : "";
+      el.classList.toggle("active", item.physicalStage === activePhysicalStage);
+      el.onclick = () => {
+        const value = ordered[sortedIndex].value;
+        els.dpiInput.value = value;
+        activeSortedStage = sortedIndex;
+        updateStageUI();
+      };
+    });
+
+    dpiMarkers.innerHTML = ordered.map((item, sortedIndex) => {
+      const left = dpiToPercent(item.value);
+      const color = DPI_COLORS[sortedIndex];
+      const active = item.physicalStage === activePhysicalStage;
+      return `<div class="dpi-marker ${active ? "active" : ""}"
+          data-physical-stage="${item.physicalStage}"
+          data-sorted-stage="${sortedIndex}"
+          style="left:${left}%">
+        <span class="dpi-marker-label" style="color:${color}">${item.value}</span>
+        <span class="dpi-marker-point" style="background:${color}" title="Estágio ${sortedIndex + 1}: ${item.value} DPI"></span>
+      </div>`;
+    }).join("");
+
+    dpiMarkers.querySelectorAll(".dpi-marker").forEach(marker => {
+      const physical = Number(marker.dataset.physicalStage);
+      const sortedIndex = Number(marker.dataset.sortedStage);
+      const point = marker.querySelector(".dpi-marker-point");
+
+      point.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        point.setPointerCapture?.(event.pointerId);
+        draggingStage = { physical, sortedIndex, pointerId: event.pointerId };
+      });
+
+      point.addEventListener("pointermove", (event) => {
+        if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
+        const rect = document.getElementById("dpi-slider-wrap").getBoundingClientRect();
+        const percent = ((event.clientX - rect.left - 10) / Math.max(1, rect.width - 20)) * 100;
+        const value = percentToDpi(percent);
+        dpiStages[physical] = value;
+        els.dpiInput.value = value;
+        updateStageUI();
+      });
+
+      point.addEventListener("pointerup", async (event) => {
+        if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
+        const stage = draggingStage.physical;
+        draggingStage = null;
+        await controller.setDpiStage(stage, dpiStages[stage]);
+        updateStageUI();
+      });
+
+      point.addEventListener("pointercancel", () => { draggingStage = null; });
+    });
+
+    const activeItem = ordered.findIndex(item => item.physicalStage === activePhysicalStage);
+    activeSortedStage = activeItem >= 0 ? activeItem : activeSortedStage;
+    els.dpiStageLabel.innerHTML = `Perfil ativo: <b>Estágio ${activeSortedStage + 1} de ${DPI_STAGE_COUNT}</b>`;
+  }
+
+  updateStageUI();
 
   function showNotice(message) {
     els.notice.textContent = message;
@@ -483,10 +724,13 @@
     els.batteryPct.textContent = "—";
     els.batteryFill.style.width = "0%";
     els.batteryBadge.classList.remove("visible");
-    dpiDotEls.forEach((d) => d.classList.remove("active"));
+    dpiStages = [...DPI_DEFAULTS];
+    activePhysicalStage = null;
+    activeSortedStage = 0;
     els.dpiStageLabel.innerHTML = "Aguardando leitura — <b>troque o DPI no mouse</b> para detectar";
     els.dpiCurrentValue.textContent = "—";
     els.dpiInput.value = "";
+    updateStageUI();
   };
 
   controller.onDisconnect = () => {
@@ -496,16 +740,32 @@
   };
 
   controller.onDpiStageChange = (stage) => {
-    dpiDotEls.forEach((d) => d.classList.toggle("active", Number(d.dataset.stage) === stage));
-    els.dpiStageLabel.innerHTML = `Perfil ativo: <b>Estágio ${stage + 1} de ${DPI_STAGE_COUNT}</b>`;
+    activePhysicalStage = stage;
+    const ordered = sortedStages();
+    const sortedIndex = ordered.findIndex(item => item.physicalStage === stage);
+    activeSortedStage = sortedIndex >= 0 ? sortedIndex : 0;
+    els.dpiStageLabel.innerHTML = `Perfil ativo: <b>Estágio ${activeSortedStage + 1} de ${DPI_STAGE_COUNT}</b>`;
+    updateStageUI();
   };
 
-  controller.onDpiValueChange = (dpiValue) => {
+  controller.onDpiValueChange = (dpiValue, physicalStage = null) => {
     els.dpiCurrentValue.textContent = dpiValue;
-    // Só preenche o input se o usuário não estiver digitando ali agora
+
+    if (Number.isInteger(physicalStage) && physicalStage >= 0 && physicalStage < DPI_STAGE_COUNT) {
+      dpiStages[physicalStage] = dpiValue;
+      activePhysicalStage = physicalStage;
+    }
+
+    const ordered = sortedStages();
+    const sortedIndex = ordered.findIndex(item => item.physicalStage === activePhysicalStage);
+    activeSortedStage = sortedIndex >= 0 ? sortedIndex : activeSortedStage;
+
+    // Só preenche o input se o usuário não estiver digitando ali agora.
     if (document.activeElement !== els.dpiInput) {
       els.dpiInput.value = dpiValue;
     }
+
+    updateStageUI();
   };
 
   controller.onBatteryUpdate = (percentage, isCharging) => {
@@ -537,9 +797,12 @@
     }
     els.btnApplyDpi.disabled = true;
     els.btnApplyDpi.textContent = "Aplicando...";
-    await controller.setDpi(value);
+    const targetStage = Number.isInteger(activePhysicalStage) ? activePhysicalStage : 0;
+    dpiStages[targetStage] = clampDpi(value);
+    await controller.setDpiStage(targetStage, dpiStages[targetStage]);
     els.btnApplyDpi.disabled = false;
     els.btnApplyDpi.textContent = "Aplicar DPI";
+    updateStageUI();
   }
 
   els.btnConnect.addEventListener("click", handleConnectClick);
