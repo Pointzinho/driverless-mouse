@@ -193,10 +193,10 @@
   /* Grid dos dois cards inferiores */
   .stat-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(280px, 0.9fr) minmax(520px, 1.6fr);
     gap: 20px;
   }
-  @media (max-width: 620px) {
+  @media (max-width: 900px) {
     .stat-grid { grid-template-columns: 1fr; }
   }
 
@@ -262,13 +262,14 @@
 
   #dpi-dots {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(5, minmax(88px, 1fr));
+    gap: 10px;
   }
   .dpi-dot {
     min-width: 0;
-    height: 48px;
-    border-radius: 9px;
+    height: 62px;
+    min-width: 88px;
+    border-radius: 12px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     display: flex;
@@ -281,8 +282,8 @@
     transition: all 0.2s ease;
     cursor: pointer;
   }
-  .dpi-dot .stage-number { font-size: 10px; color: var(--text-faint); }
-  .dpi-dot .stage-value { font-size: 12px; font-weight: 700; color: inherit; }
+  .dpi-dot .stage-number { font-size: 10px; color: var(--text-faint); white-space: nowrap; line-height: 1.2; }
+  .dpi-dot .stage-value { font-size: 13px; font-weight: 700; color: inherit; white-space: nowrap; line-height: 1.2; }
   .dpi-dot.active {
     background: var(--signal-soft);
     border-color: var(--signal);
@@ -293,7 +294,7 @@
 
   #dpi-slider-wrap {
     position: relative;
-    padding: 58px 10px 34px;
+    padding: 64px 10px 42px;
     user-select: none;
     touch-action: none;
   }
@@ -301,7 +302,7 @@
     position: absolute;
     left: 10px;
     right: 10px;
-    top: 76px;
+    top: 82px;
     height: 4px;
     border-radius: 99px;
     background: linear-gradient(90deg, var(--text-faint), #87949a);
@@ -310,7 +311,7 @@
     position: absolute;
     left: 10px;
     right: 10px;
-    top: 69px;
+    top: 75px;
     height: 18px;
     pointer-events: none;
     background:
@@ -325,7 +326,7 @@
   }
   .dpi-marker {
     position: absolute;
-    top: 45px;
+    top: 51px;
     width: 0;
     height: 64px;
     transform: translateX(-50%);
@@ -334,7 +335,7 @@
   .dpi-marker-label {
     position: absolute;
     left: 50%;
-    bottom: 49px;
+    bottom: 55px;
     transform: translateX(-50%);
     white-space: nowrap;
     font-family: var(--mono);
@@ -344,15 +345,18 @@
   .dpi-marker-point {
     position: absolute;
     left: 50%;
-    top: 24px;
-    width: 22px;
-    height: 22px;
+    top: 30px;
+    width: 24px;
+    height: 24px;
     transform: translate(-50%, -50%);
     border-radius: 50%;
     border: 3px solid var(--bg-card);
     box-shadow: 0 0 0 1px rgba(255,255,255,.16);
     cursor: grab;
     transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .dpi-marker.pending .dpi-marker-point {
+    box-shadow: 0 0 0 2px var(--signal), 0 0 18px rgba(255,176,0,.22);
   }
   .dpi-marker-point:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.12); }
   .dpi-marker.active .dpi-marker-point {
@@ -366,7 +370,7 @@
 
   .dpi-scale {
     position: absolute;
-    top: 96px;
+    top: 108px;
     font-family: var(--mono);
     font-size: 10px;
     color: var(--text-faint);
@@ -428,10 +432,14 @@
     text-align: center;
   }
   #dpi-help b { color: var(--text); }
+  @media (max-width: 900px) {
+    #dpi-dots { overflow-x: auto; padding-bottom: 4px; }
+    .dpi-dot { flex: 0 0 88px; }
+  }
   @media (max-width: 700px) {
     #dpi-edit-row { grid-template-columns: 1fr; }
-    #dpi-dots { gap: 5px; }
-    .dpi-dot { height: 44px; }
+    #dpi-dots { gap: 7px; }
+    .dpi-dot { height: 58px; }
   }
 
 
@@ -525,7 +533,7 @@
 
       <div id="dpi-dots"></div>
 
-      <div id="dpi-slider-wrap" aria-label="Editor das cinco velocidades de DPI">
+      <div id="dpi-slider-wrap" aria-label="Editor do DPI do estágio selecionado">
         <div id="dpi-slider-track"></div>
         <div id="dpi-slider-ticks"></div>
         <div class="dpi-scale left">100</div>
@@ -548,7 +556,7 @@
       </div>
 
       <div id="dpi-help">
-        <b>Arraste os pontos coloridos</b> para ajustar os estágios. Você também pode digitar um valor e clicar em <b>Aplicar DPI</b>.
+        <b>Arraste a única bolinha</b> para escolher o DPI do estágio selecionado. O mouse só será alterado quando você pressionar <b>Enter</b> ou clicar em <b>Aplicar DPI</b>.
       </div>
     </div>
   </div>
@@ -586,9 +594,11 @@
   const DPI_COLORS = ["#ffffff", "#ff7a00", "#35d6c5", "#ffe600", "#d53cff"];
   const DPI_DEFAULTS = [800, 1200, 1600, 2400, 3200];
   let dpiStages = [...DPI_DEFAULTS];
-  let activePhysicalStage = null;
+  let activePhysicalStage = null;      // estágio físico atualmente ativo no mouse
+  let editingPhysicalStage = 0;        // estágio que a bolinha/input está editando
   let activeSortedStage = 0;
   let draggingStage = null;
+  let pendingDpi = null;               // valor escolhido na barra/input, ainda não enviado
 
   els.dpiDots.innerHTML = Array.from({ length: DPI_STAGE_COUNT })
     .map((_, i) => `<div class="dpi-dot" data-slot="${i}">
@@ -625,74 +635,116 @@
     return Math.round(raw / 50) * 50;
   }
 
+  function getEditingDpi() {
+    const stage = Number.isInteger(editingPhysicalStage) ? editingPhysicalStage : 0;
+    return pendingDpi != null ? clampDpi(pendingDpi) : clampDpi(dpiStages[stage]);
+  }
+
+  function setPendingDpi(value) {
+    pendingDpi = clampDpi(value);
+    els.dpiInput.value = pendingDpi;
+    updateStageUI();
+  }
+
   function updateStageUI() {
     const ordered = sortedStages();
 
+    // Os cinco estágios continuam sendo exibidos como antes, em ordem crescente.
     dpiDotEls.forEach((el, sortedIndex) => {
       const item = ordered[sortedIndex];
+      const isActive = item.physicalStage === activePhysicalStage;
+      const isEditing = item.physicalStage === editingPhysicalStage;
+
       el.querySelector(".stage-number").textContent = `ESTÁGIO ${sortedIndex + 1}`;
       el.querySelector(".stage-value").textContent = `${item.value} DPI`;
       el.style.color = DPI_COLORS[sortedIndex];
-      el.style.borderColor = item.physicalStage === activePhysicalStage
-        ? DPI_COLORS[sortedIndex]
-        : "";
-      el.classList.toggle("active", item.physicalStage === activePhysicalStage);
+      el.style.borderColor = isActive ? DPI_COLORS[sortedIndex] : "";
+      el.classList.toggle("active", isActive);
+      el.title = isEditing
+        ? "Estágio selecionado para edição"
+        : "Clique para selecionar este estágio para edição";
+
+      // Clicar em um estágio seleciona-o para edição, mas NÃO altera o mouse.
       el.onclick = () => {
-        const value = ordered[sortedIndex].value;
-        els.dpiInput.value = value;
-        activeSortedStage = sortedIndex;
+        editingPhysicalStage = item.physicalStage;
+        pendingDpi = null;
+        els.dpiInput.value = dpiStages[editingPhysicalStage];
         updateStageUI();
       };
     });
 
-    dpiMarkers.innerHTML = ordered.map((item, sortedIndex) => {
-      const left = dpiToPercent(item.value);
-      const color = DPI_COLORS[sortedIndex];
-      const active = item.physicalStage === activePhysicalStage;
-      return `<div class="dpi-marker ${active ? "active" : ""}"
-          data-physical-stage="${item.physicalStage}"
-          data-sorted-stage="${sortedIndex}"
-          style="left:${left}%">
-        <span class="dpi-marker-label" style="color:${color}">${item.value}</span>
-        <span class="dpi-marker-point" style="background:${color}" title="Estágio ${sortedIndex + 1}: ${item.value} DPI"></span>
+    // Uma única bolinha: ela representa o estágio selecionado para edição.
+    const editingStage = Number.isInteger(editingPhysicalStage)
+      ? editingPhysicalStage
+      : (Number.isInteger(activePhysicalStage) ? activePhysicalStage : 0);
+
+    const editingItem = {
+      physicalStage: editingStage,
+      value: getEditingDpi()
+    };
+
+    const left = dpiToPercent(editingItem.value);
+    const colorIndex = Math.max(
+      0,
+      ordered.findIndex(item => item.physicalStage === editingStage)
+    );
+    const color = DPI_COLORS[colorIndex % DPI_COLORS.length];
+    const isPending = pendingDpi != null;
+
+    dpiMarkers.innerHTML = `
+      <div class="dpi-marker ${isPending ? "pending" : ""}"
+           data-physical-stage="${editingStage}"
+           style="left:${left}%">
+        <span class="dpi-marker-label" style="color:${color}">${editingItem.value}</span>
+        <span class="dpi-marker-point"
+              style="background:${color}"
+              title="Arraste para escolher o DPI. Enter ou Aplicar DPI confirma."></span>
       </div>`;
-    }).join("");
 
-    dpiMarkers.querySelectorAll(".dpi-marker").forEach(marker => {
-      const physical = Number(marker.dataset.physicalStage);
-      const sortedIndex = Number(marker.dataset.sortedStage);
-      const point = marker.querySelector(".dpi-marker-point");
+    const marker = dpiMarkers.querySelector(".dpi-marker");
+    const point = marker?.querySelector(".dpi-marker-point");
 
+    if (point) {
       point.addEventListener("pointerdown", (event) => {
         event.preventDefault();
         point.setPointerCapture?.(event.pointerId);
-        draggingStage = { physical, sortedIndex, pointerId: event.pointerId };
+        draggingStage = {
+          physical: editingStage,
+          pointerId: event.pointerId
+        };
       });
 
       point.addEventListener("pointermove", (event) => {
         if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
+
         const rect = document.getElementById("dpi-slider-wrap").getBoundingClientRect();
-        const percent = ((event.clientX - rect.left - 10) / Math.max(1, rect.width - 20)) * 100;
-        const value = percentToDpi(percent);
-        dpiStages[physical] = value;
-        els.dpiInput.value = value;
-        updateStageUI();
+        const percent = ((event.clientX - rect.left - 10) /
+          Math.max(1, rect.width - 20)) * 100;
+
+        // IMPORTANTE: arrastar NÃO envia nada para o mouse.
+        // Apenas atualiza o valor pendente e o campo de texto.
+        setPendingDpi(percentToDpi(percent));
       });
 
-      point.addEventListener("pointerup", async (event) => {
+      point.addEventListener("pointerup", (event) => {
         if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
-        const stage = draggingStage.physical;
         draggingStage = null;
-        await controller.setDpiStage(stage, dpiStages[stage]);
-        updateStageUI();
+        point.releasePointerCapture?.(event.pointerId);
+        // Nenhuma chamada HID aqui. Só Enter ou "Aplicar DPI" confirma.
       });
 
-      point.addEventListener("pointercancel", () => { draggingStage = null; });
-    });
+      point.addEventListener("pointercancel", () => {
+        draggingStage = null;
+      });
+    }
 
-    const activeItem = ordered.findIndex(item => item.physicalStage === activePhysicalStage);
+    const activeItem = ordered.findIndex(
+      item => item.physicalStage === activePhysicalStage
+    );
     activeSortedStage = activeItem >= 0 ? activeItem : activeSortedStage;
-    els.dpiStageLabel.innerHTML = `Perfil ativo: <b>Estágio ${activeSortedStage + 1} de ${DPI_STAGE_COUNT}</b>`;
+
+    els.dpiStageLabel.innerHTML =
+      `Perfil ativo: <b>Estágio ${activeSortedStage + 1} de ${DPI_STAGE_COUNT}</b>`;
   }
 
   updateStageUI();
@@ -726,7 +778,9 @@
     els.batteryBadge.classList.remove("visible");
     dpiStages = [...DPI_DEFAULTS];
     activePhysicalStage = null;
+    editingPhysicalStage = 0;
     activeSortedStage = 0;
+    pendingDpi = null;
     els.dpiStageLabel.innerHTML = "Aguardando leitura — <b>troque o DPI no mouse</b> para detectar";
     els.dpiCurrentValue.textContent = "—";
     els.dpiInput.value = "";
@@ -741,27 +795,47 @@
 
   controller.onDpiStageChange = (stage) => {
     activePhysicalStage = stage;
+
+    // Ao trocar fisicamente de estágio, passamos a editar esse estágio.
+    // Isso não envia nenhuma alteração: apenas seleciona o estágio ativo.
+    editingPhysicalStage = stage;
+    pendingDpi = null;
+
     const ordered = sortedStages();
     const sortedIndex = ordered.findIndex(item => item.physicalStage === stage);
     activeSortedStage = sortedIndex >= 0 ? sortedIndex : 0;
-    els.dpiStageLabel.innerHTML = `Perfil ativo: <b>Estágio ${activeSortedStage + 1} de ${DPI_STAGE_COUNT}</b>`;
+
+    if (document.activeElement !== els.dpiInput) {
+      els.dpiInput.value = dpiStages[stage] ?? "";
+    }
+
+    els.dpiStageLabel.innerHTML =
+      `Perfil ativo: <b>Estágio ${activeSortedStage + 1} de ${DPI_STAGE_COUNT}</b>`;
     updateStageUI();
   };
 
   controller.onDpiValueChange = (dpiValue, physicalStage = null) => {
     els.dpiCurrentValue.textContent = dpiValue;
 
-    if (Number.isInteger(physicalStage) && physicalStage >= 0 && physicalStage < DPI_STAGE_COUNT) {
+    if (Number.isInteger(physicalStage) &&
+        physicalStage >= 0 &&
+        physicalStage < DPI_STAGE_COUNT) {
       dpiStages[physicalStage] = dpiValue;
       activePhysicalStage = physicalStage;
+
+      if (pendingDpi == null) {
+        editingPhysicalStage = physicalStage;
+      }
     }
 
     const ordered = sortedStages();
-    const sortedIndex = ordered.findIndex(item => item.physicalStage === activePhysicalStage);
+    const sortedIndex = ordered.findIndex(
+      item => item.physicalStage === activePhysicalStage
+    );
     activeSortedStage = sortedIndex >= 0 ? sortedIndex : activeSortedStage;
 
-    // Só preenche o input se o usuário não estiver digitando ali agora.
-    if (document.activeElement !== els.dpiInput) {
+    // Não sobrescreve uma edição pendente enquanto o usuário digita/arrasta.
+    if (pendingDpi == null && document.activeElement !== els.dpiInput) {
       els.dpiInput.value = dpiValue;
     }
 
@@ -790,27 +864,53 @@
   }
 
   async function handleApplyDpiClick() {
-    const value = Number(els.dpiInput.value);
-    if (!value || value <= 0) {
-      showNotice("Digite um valor de DPI válido antes de aplicar.");
+    const value = clampDpi(els.dpiInput.value);
+
+    if (!Number.isFinite(Number(els.dpiInput.value)) ||
+        Number(els.dpiInput.value) < 100 ||
+        Number(els.dpiInput.value) > 32000) {
+      showNotice("Digite um valor de DPI entre 100 e 32000.");
       return;
     }
+
+    const targetStage = Number.isInteger(editingPhysicalStage)
+      ? editingPhysicalStage
+      : (Number.isInteger(activePhysicalStage) ? activePhysicalStage : 0);
+
     els.btnApplyDpi.disabled = true;
     els.btnApplyDpi.textContent = "Aplicando...";
-    const targetStage = Number.isInteger(activePhysicalStage) ? activePhysicalStage : 0;
-    dpiStages[targetStage] = clampDpi(value);
-    await controller.setDpiStage(targetStage, dpiStages[targetStage]);
-    els.btnApplyDpi.disabled = false;
-    els.btnApplyDpi.textContent = "Aplicar DPI";
-    updateStageUI();
+
+    try {
+      // Só aqui o valor é enviado ao mouse.
+      dpiStages[targetStage] = value;
+      await controller.setDpiStage(targetStage, value);
+      pendingDpi = null;
+      els.dpiInput.value = value;
+      updateStageUI();
+    } finally {
+      els.btnApplyDpi.disabled = false;
+      els.btnApplyDpi.textContent = "Aplicar DPI";
+    }
   }
 
   els.btnConnect.addEventListener("click", handleConnectClick);
   els.btnDisconnect.addEventListener("click", handleDisconnectClick);
   els.btnDisconnectHeader.addEventListener("click", handleDisconnectClick);
   els.btnApplyDpi.addEventListener("click", handleApplyDpiClick);
+
+  els.dpiInput.addEventListener("input", () => {
+    const value = Number(els.dpiInput.value);
+    if (Number.isFinite(value) && value >= 100 && value <= 32000) {
+      pendingDpi = clampDpi(value);
+      updateStageUI();
+    }
+  });
+
   els.dpiInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") handleApplyDpiClick();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleApplyDpiClick();
+    }
   });
 
   if (!MouseController.isSupported()) {
