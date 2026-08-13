@@ -506,11 +506,17 @@ const LOGITECH_G502X = {
 
       return true;
     } catch (err) {
-      controller._error(
-        `Não foi possível aplicar ${clamped} DPI: ${
-          err?.message || err
-        }`
-      );
+      const errorMessage = err?.message || String(err);
+      
+      // Se o Windows ou o mouse rejeitarem a gravação (Trava do G HUB)
+      if (errorMessage.includes("Failed to write the report") || errorMessage.includes("write")) {
+        controller._error(
+          `O mouse bloqueou a gravação de DPI. Para destravar: 1) Abra o G HUB e clique em "Restaurar configuração original". 2) Conecte via cabo, desligue e ligue o mouse. 3) Volte para o Dongle, feche o G HUB e tente novamente.`
+        );
+      } else {
+        // Para outros erros genéricos
+        controller._error(`Não foi possível aplicar ${clamped} DPI: ${errorMessage}`);
+      }
 
       return false;
     }
