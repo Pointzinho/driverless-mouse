@@ -14,13 +14,6 @@ function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
   return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
 }
 
-function buildHidppLongPacket(deviceIndex, featureIndex, functionId, params) {
-  const p = new Array(16).fill(0);
-  (params || []).forEach((v, i) => { if (i < 16) p[i] = v & 0xff; });
-  const funcByte = ((functionId & 0x0f) << 4) | (HIDPP_SOFTWARE_ID & 0x0f);
-  return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
-}
-
 const ATTACK_SHARK_V3 = {
   id: "attack-shark-v3",
   label: "Attack Shark V3",
@@ -67,6 +60,7 @@ const LOGITECH_G502X = {
   
   batteryFeatureIndex: null,
   adjustableDpiFeatureIndex: null, 
+  currentSensorIndex: 0x00, // Armazena o ID real do sensor
   
   dpiEventFeatureIndex: 0x09,     
   dpiStageCount: 5,
@@ -129,7 +123,6 @@ const LOGITECH_G502X = {
 
   async getDpi(controller) {
     if (this.adjustableDpiFeatureIndex === null) return;
-    // CORREÇÃO: Função 0x02 é a verdadeira GetSensorDPI
     await controller._sendHidppShort(
       this.adjustableDpiFeatureIndex,
       0x02, 
@@ -145,11 +138,11 @@ const LOGITECH_G502X = {
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
     
-    // CORREÇÃO: Função 0x03 é a verdadeira SetSensorDPI
-    const ok = await controller._sendHidppLong(
+    // Envia o envelope curto usando o Sensor Index que o mouse relatou
+    const ok = await controller._sendHidppShort(
       this.adjustableDpiFeatureIndex,
       0x03,
-      [0x00, high, low, high, low],
+      [this.currentSensorIndex, high, low],
       `SetSensorDPI (${clamped})`
     );
     
@@ -163,11 +156,16 @@ const LOGITECH_G502X = {
   handleInputReport(controller, reportId, bytes) {
     const deviceIndexOk = this.knownDeviceIndexes.includes(bytes[0]);
 
+    // Captura de Erros do Firmware
+    if (deviceIndexOk && bytes[1] === 0x8f) {
+      console.warn(`[HID++ Erro do Firmware] Feature: 0x${bytes[2].toString(16)}, Código de Erro: 0x${bytes[3].toString(16)}`);
+    }
+
     // Resposta de leitura/escrita de DPI numérico
     if (deviceIndexOk && this.adjustableDpiFeatureIndex !== null && bytes[1] === this.adjustableDpiFeatureIndex && bytes.length > 5) {
       const func = bytes[2] >> 4;
-      // Validamos respostas de Get (0x02) ou de Sucesso no Set (0x03)
       if (func === 0x02 || func === 0x03) {
+        this.currentSensorIndex = bytes[3]; // Grava o ID exato do sensor!
         const dpiValue = (bytes[4] << 8) | bytes[5];
         if (dpiValue > 0) {
           controller._emitDpiValue(dpiValue);
@@ -176,7 +174,7 @@ const LOGITECH_G502X = {
       }
     }
 
-    // Notificação de troca de estágio de DPI via botão
+    // Notificação de troca de estágio de DPI
     if (deviceIndexOk && reportId === HIDPP_LONG_REPORT_ID && bytes[1] === this.dpiEventFeatureIndex && bytes.length > 3) {
       const stage = bytes[3];
       if (stage >= 0 && stage < this.dpiStageCount) {
@@ -364,18 +362,6 @@ export class MouseController {
     const data = buildHidppShortPacket(this.deviceIndex, featureIndex, functionId, params);
     try {
       await this.device.sendReport(HIDPP_SHORT_REPORT_ID, data);
-      return true;
-    } catch (err) {
-      this._error(`Falha ao enviar "${label}". Feche o Logitech G HUB.`);
-      return false;
-    }
-  }
-
-  async _sendHidppLong(featureIndex, functionId, params, label) {
-    if (!this.device) return false;
-    const data = buildHidppLongPacket(this.deviceIndex, featureIndex, functionId, params);
-    try {
-      await this.device.sendReport(HIDPP_LONG_REPORT_ID, data);
       return true;
     } catch (err) {
       this._error(`Falha ao enviar "${label}". Feche o Logitech G HUB.`);
