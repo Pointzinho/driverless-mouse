@@ -193,10 +193,10 @@
   /* Grid dos dois cards inferiores */
   .stat-grid {
     display: grid;
-    grid-template-columns: minmax(280px, 0.9fr) minmax(520px, 1.6fr);
+    grid-template-columns: 1fr 1fr;
     gap: 20px;
   }
-  @media (max-width: 900px) {
+  @media (max-width: 620px) {
     .stat-grid { grid-template-columns: 1fr; }
   }
 
@@ -262,14 +262,13 @@
 
   #dpi-dots {
     display: grid;
-    grid-template-columns: repeat(5, minmax(88px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
   }
   .dpi-dot {
     min-width: 0;
-    height: 62px;
-    min-width: 88px;
-    border-radius: 12px;
+    height: 48px;
+    border-radius: 9px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     display: flex;
@@ -282,8 +281,8 @@
     transition: all 0.2s ease;
     cursor: pointer;
   }
-  .dpi-dot .stage-number { font-size: 10px; color: var(--text-faint); white-space: nowrap; line-height: 1.2; }
-  .dpi-dot .stage-value { font-size: 13px; font-weight: 700; color: inherit; white-space: nowrap; line-height: 1.2; }
+  .dpi-dot .stage-number { font-size: 10px; color: var(--text-faint); }
+  .dpi-dot .stage-value { font-size: 12px; font-weight: 700; color: inherit; }
   .dpi-dot.active {
     background: var(--signal-soft);
     border-color: var(--signal);
@@ -294,7 +293,7 @@
 
   #dpi-slider-wrap {
     position: relative;
-    padding: 64px 10px 42px;
+    padding: 58px 10px 34px;
     user-select: none;
     touch-action: none;
   }
@@ -302,7 +301,7 @@
     position: absolute;
     left: 10px;
     right: 10px;
-    top: 82px;
+    top: 76px;
     height: 4px;
     border-radius: 99px;
     background: linear-gradient(90deg, var(--text-faint), #87949a);
@@ -311,7 +310,7 @@
     position: absolute;
     left: 10px;
     right: 10px;
-    top: 75px;
+    top: 69px;
     height: 18px;
     pointer-events: none;
     background:
@@ -326,7 +325,7 @@
   }
   .dpi-marker {
     position: absolute;
-    top: 51px;
+    top: 45px;
     width: 0;
     height: 64px;
     transform: translateX(-50%);
@@ -335,7 +334,7 @@
   .dpi-marker-label {
     position: absolute;
     left: 50%;
-    bottom: 55px;
+    bottom: 49px;
     transform: translateX(-50%);
     white-space: nowrap;
     font-family: var(--mono);
@@ -345,7 +344,7 @@
   .dpi-marker-point {
     position: absolute;
     left: 50%;
-    top: 30px;
+    top: 24px;
     width: 24px;
     height: 24px;
     transform: translate(-50%, -50%);
@@ -370,7 +369,7 @@
 
   .dpi-scale {
     position: absolute;
-    top: 108px;
+    top: 96px;
     font-family: var(--mono);
     font-size: 10px;
     color: var(--text-faint);
@@ -432,14 +431,10 @@
     text-align: center;
   }
   #dpi-help b { color: var(--text); }
-  @media (max-width: 900px) {
-    #dpi-dots { overflow-x: auto; padding-bottom: 4px; }
-    .dpi-dot { flex: 0 0 88px; }
-  }
   @media (max-width: 700px) {
     #dpi-edit-row { grid-template-columns: 1fr; }
-    #dpi-dots { gap: 7px; }
-    .dpi-dot { height: 58px; }
+    #dpi-dots { gap: 5px; }
+    .dpi-dot { height: 44px; }
   }
 
 

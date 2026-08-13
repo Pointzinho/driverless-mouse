@@ -10,7 +10,7 @@
 
 const HIDPP_SHORT_REPORT_ID = 0x10;
 const HIDPP_LONG_REPORT_ID = 0x11;
-const HIDPP_SOFTWARE_ID = 0x01;
+const HIDPP_SOFTWARE_ID = 0x08;
 
 function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
   const p = [0, 0, 0];
