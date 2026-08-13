@@ -97,35 +97,36 @@ const LOGITECH_G502X = {
 
       const high = (featureId >> 8) & 0xff;
       const low = featureId & 0xff;
-      controller._sendHidppShort(0x00, 0x00, [high, low, 0x00], `GetFeature(0x${featureId.toString(16).padStart(4, '0')})`);
+      controller._sendHidppShort(0x00, 0x00, [high, low, 0x00], `GetFeature(0x${featureId.toString(16).padStart(4, '0')})`, true);
     });
   },
 
   async init(controller) {
     controller.deviceIndex = this.resolveDeviceIndex(controller.device.productId);
     
-    await controller._logitechPing();
-    await new Promise((r) => setTimeout(r, 200));
+    try {
+      await controller._logitechPing();
+      await new Promise((r) => setTimeout(r, 200));
 
-    // Tenta resolução dinâmica. Se falhar (como no modo cabo), usa os fallbacks fixos (0x07 e 0x06)
-    if (controller.device.productId === 0xc098) {
-      // Modo Cabo: Usa os índices padrão de fábrica mapeados no diagnóstico
-      this.adjustableDpiFeatureIndex = 0x07;
-      this.batteryFeatureIndex = 0x06;
-    } else {
-      // Modo Dongle: Resolve dinamicamente
-      this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201) || 0x07;
-      this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004) || 0x06;
-    }
+      if (controller.device.productId === 0xc098) {
+        this.adjustableDpiFeatureIndex = 0x07;
+        this.batteryFeatureIndex = 0x06;
+      } else {
+        this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201) || 0x07;
+        this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004) || 0x06;
+      }
 
-    if (this.batteryFeatureIndex !== null) {
-      await controller._logitechRequestBattery(); 
-      controller._startLogitechBatteryPolling();
-    }
-    
-    if (this.adjustableDpiFeatureIndex !== null) {
-      await new Promise((r) => setTimeout(r, 150));
-      await this.getDpi(controller); 
+      if (this.batteryFeatureIndex !== null) {
+        await controller._logitechRequestBattery(); 
+        controller._startLogitechBatteryPolling();
+      }
+      
+      if (this.adjustableDpiFeatureIndex !== null) {
+        await new Promise((r) => setTimeout(r, 150));
+        await this.getDpi(controller); 
+      }
+    } catch (err) {
+      console.warn("[driverless-mouse] Aviso: Conexão via cabo possui restrições de escrita do Windows.", err);
     }
   },
 
@@ -135,7 +136,8 @@ const LOGITECH_G502X = {
       this.adjustableDpiFeatureIndex,
       0x02, 
       [0x00, 0x00, 0x00], 
-      "GetSensorDPI"
+      "GetSensorDPI",
+      true
     );
   },
 
@@ -150,7 +152,8 @@ const LOGITECH_G502X = {
       this.adjustableDpiFeatureIndex,
       0x03,
       [this.currentSensorIndex, high, low],
-      `SetSensorDPI (${clamped})`
+      `SetSensorDPI (${clamped})`,
+      false
     );
     
     if (ok) {
@@ -303,7 +306,7 @@ export class MouseController {
   _handleConnectionError(err) {
     let msg = err.name === "NotFoundError" ? "Nenhum mouse foi selecionado." :
               err.name === "SecurityError" ? "Acesso HID bloqueado pelo navegador." :
-              err.name === "InvalidStateError" ? "O dispositivo já está aberto por outra aba/processo. Feche o GHUB!" :
+              err.name === "InvalidStateError" ? "O dispositivo já está aberto por outra aba/processo." :
               `Erro ao conectar: ${err.message}`;
     this._error(msg);
   }
@@ -360,20 +363,22 @@ export class MouseController {
     if (stage !== null) this._emitDpiStage(stage);
   }
 
-  async _sendHidppShort(featureIndex, functionId, params, label) {
+  async _sendHidppShort(featureIndex, functionId, params, label, silentFail = false) {
     if (!this.device) return false;
     const data = buildHidppShortPacket(this.deviceIndex, featureIndex, functionId, params);
     try {
       await this.device.sendReport(HIDPP_SHORT_REPORT_ID, data);
       return true;
     } catch (err) {
-      this._error(`Falha ao enviar "${label}". Feche o Logitech G HUB.`);
+      if (!silentFail) {
+        this._error(`Falha ao enviar "${label}". O Windows pode estar bloqueando a porta USB direta.`);
+      }
       return false;
     }
   }
 
   async _logitechPing() {
-    await this._sendHidppShort(0x00, 0x01, [0x00, 0x00, 0x5a], "Ping (GetProtocolVersion)");
+    await this._sendHidppShort(0x00, 0x01, [0x00, 0x00, 0x5a], "Ping (GetProtocolVersion)", true);
   }
 
   async _logitechRequestBattery() {
@@ -382,7 +387,8 @@ export class MouseController {
       this.profile.batteryFeatureIndex,
       0x01, 
       [0x00, 0x00, 0x00],
-      "GetStatus (Unified Battery)"
+      "GetStatus (Unified Battery)",
+      true
     );
   }
 
