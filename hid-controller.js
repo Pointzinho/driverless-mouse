@@ -1,11 +1,11 @@
 /* =========================================================================
    driverless-mouse — hid-controller.js
-   Motor de controle WebHID corrigido para o Logitech G502 X LIGHTSPEED.
+   Motor de controle WebHID corrigido e estabilizado para o Logitech G502 X.
    ========================================================================= */
 
 const HIDPP_SHORT_REPORT_ID = 0x10;
 const HIDPP_LONG_REPORT_ID = 0x11;
-const HIDPP_SOFTWARE_ID = 0x01; // Restaurado para 0x01 (padrão aceito pelo firmware)
+const HIDPP_SOFTWARE_ID = 0x01;
 
 function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
   const p = [0, 0, 0];
@@ -117,44 +117,27 @@ const LOGITECH_G502X = {
   },
 
   async resolveFeature(controller, featureId, options = {}) {
-    const retries = Math.max(1, options.retries ?? 3);
-    const timeoutMs = Math.max(50, options.timeoutMs ?? 300);
+    const retries = Math.max(1, options.retries ?? 5);
+    const timeoutMs = Math.max(300, options.timeoutMs ?? 1500);
 
     const featureHi = (featureId >> 8) & 0xff;
     const featureLo = featureId & 0xff;
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
+        console.info(`[G502X] Resolvendo feature 0x${featureId.toString(16)} (tentativa ${attempt}/${retries})...`);
         const response =
           await controller._sendHidppShortAndWait(
-            0x00, 
-            0x00, 
+            0x00, // Feature Root
+            0x00, // GetFeature
             [featureHi, featureLo, 0x00],
             `GetFeature 0x${featureId.toString(16).padStart(4, "0")}`,
             (reportId, bytes) => {
-              if (
-                reportId !== HIDPP_SHORT_REPORT_ID &&
-                reportId !== HIDPP_LONG_REPORT_ID
-              ) {
-                return false;
-              }
-              if (!bytes || bytes.length < 5) {
-                return false;
-              }
-              if (bytes[0] !== controller.deviceIndex) {
-                return false;
-              }
-              if (bytes[1] !== 0x00) {
-                return false;
-              }
+              if (!bytes || bytes.length < 4) return false;
+              if (bytes[0] !== controller.deviceIndex) return false;
+              if (bytes[1] !== 0x00) return false; // Resposta da raiz
               const functionId = (bytes[2] >> 4) & 0x0f;
-              if (functionId !== 0x00) {
-                return false;
-              }
-              const softwareId = bytes[2] & 0x0f;
-              if (softwareId !== HIDPP_SOFTWARE_ID) {
-                return false;
-              }
+              if (functionId !== 0x00) return false; // GetFeature response
               return true;
             },
             timeoutMs
@@ -166,6 +149,7 @@ const LOGITECH_G502X = {
 
         const bytes = response.bytes;
         const resolvedIndex = bytes[3];
+        console.info(`[G502X] Feature 0x${featureId.toString(16)} resolvida para index: 0x${resolvedIndex.toString(16)}`);
 
         if (
           resolvedIndex === undefined ||
@@ -183,10 +167,11 @@ const LOGITECH_G502X = {
           attempt,
         };
       } catch (err) {
+        console.warn(`[G502X] Tentativa ${attempt} falhou para feature 0x${featureId.toString(16)}:`, err.message);
         if (attempt >= retries) {
           throw err;
         }
-        await new Promise((resolve) => setTimeout(resolve, 50 * attempt));
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
       }
     }
     return null;
@@ -210,17 +195,17 @@ const LOGITECH_G502X = {
 
     // 0x1004 — Unified Battery
     try {
-      const result = await this.resolveFeature(controller, 0x1004, { retries: 3, timeoutMs: 300 });
+      const result = await this.resolveFeature(controller, 0x1004, { retries: 3, timeoutMs: 1200 });
       controller.logitechFeatures.unifiedBattery = result.featureIndex;
     } catch (_err) {
       controller.logitechFeatures.unifiedBattery = this.getFallbackFeatureIndex(0x1004);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await new Promise((resolve) => setTimeout(resolve, 80));
 
     // 0x2201 — Adjustable DPI
     try {
-      const result = await this.resolveFeature(controller, 0x2201, { retries: 3, timeoutMs: 300 });
+      const result = await this.resolveFeature(controller, 0x2201, { retries: 3, timeoutMs: 1200 });
       controller.logitechFeatures.adjustableDpi = result.featureIndex;
     } catch (_err) {
       controller.logitechFeatures.adjustableDpi = this.getFallbackFeatureIndex(0x2201);
@@ -229,6 +214,7 @@ const LOGITECH_G502X = {
     this.batteryFeatureIndex = controller.logitechFeatures.unifiedBattery;
     this.adjustableDpiFeatureIndex = controller.logitechFeatures.adjustableDpi;
 
+    console.info("[G502X] Features finais resolvidas:", controller.logitechFeatures);
     return controller.logitechFeatures;
   },
 
@@ -239,7 +225,7 @@ const LOGITECH_G502X = {
     try {
       await this.resolveFeatures(controller);
       await controller._logitechPing();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       if (controller.logitechFeatures.unifiedBattery !== null) {
         await controller._logitechRequestBattery();
@@ -247,7 +233,7 @@ const LOGITECH_G502X = {
       }
 
       if (controller.logitechFeatures.adjustableDpi !== null) {
-        await new Promise((resolve) => setTimeout(resolve, 75));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         await this.getDpi(controller);
       }
     } catch (err) {
@@ -273,13 +259,13 @@ const LOGITECH_G502X = {
     );
   },
 
-  // Correção principal: setDpi usa envio direto e seguro (_sendHidppShort)
   async setDpi(controller, dpiValue) {
     const featureIndex =
       controller.logitechFeatures?.adjustableDpi ??
       this.adjustableDpiFeatureIndex;
 
     if (featureIndex === null || featureIndex === undefined) {
+      controller._error("Feature de DPI ajustável não encontrada.");
       return false;
     }
 
@@ -300,7 +286,7 @@ const LOGITECH_G502X = {
         return false;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 250));
       await this.getDpi(controller);
       return true;
     } catch (err) {
