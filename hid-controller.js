@@ -60,7 +60,7 @@ const LOGITECH_G502X = {
   
   batteryFeatureIndex: null,
   adjustableDpiFeatureIndex: null, 
-  currentSensorIndex: 0x00, 
+  currentSensorIndex: 0x00, // Armazena o ID real do sensor
   
   dpiEventFeatureIndex: 0x09,     
   dpiStageCount: 5,
@@ -93,40 +93,31 @@ const LOGITECH_G502X = {
       timeout = setTimeout(() => {
         controller.device.removeEventListener("inputreport", listener);
         resolve(null);
-      }, 1000);
+      }, 1500);
 
       const high = (featureId >> 8) & 0xff;
       const low = featureId & 0xff;
-      controller._sendHidppShort(0x00, 0x00, [high, low, 0x00], `GetFeature(0x${featureId.toString(16).padStart(4, '0')})`, true);
+      controller._sendHidppShort(0x00, 0x00, [high, low, 0x00], `GetFeature(0x${featureId.toString(16).padStart(4, '0')})`);
     });
   },
 
   async init(controller) {
     controller.deviceIndex = this.resolveDeviceIndex(controller.device.productId);
     
-    try {
-      await controller._logitechPing();
-      await new Promise((r) => setTimeout(r, 200));
+    await controller._logitechPing();
+    await new Promise((r) => setTimeout(r, 250));
 
-      if (controller.device.productId === 0xc098) {
-        this.adjustableDpiFeatureIndex = 0x07;
-        this.batteryFeatureIndex = 0x06;
-      } else {
-        this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201) || 0x07;
-        this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004) || 0x06;
-      }
+    this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201);
+    this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004);
 
-      if (this.batteryFeatureIndex !== null) {
-        await controller._logitechRequestBattery(); 
-        controller._startLogitechBatteryPolling();
-      }
-      
-      if (this.adjustableDpiFeatureIndex !== null) {
-        await new Promise((r) => setTimeout(r, 150));
-        await this.getDpi(controller); 
-      }
-    } catch (err) {
-      console.warn("[driverless-mouse] Aviso: Conexão via cabo possui restrições de escrita do Windows.", err);
+    if (this.batteryFeatureIndex !== null) {
+      await controller._logitechRequestBattery(); 
+      controller._startLogitechBatteryPolling();
+    }
+    
+    if (this.adjustableDpiFeatureIndex !== null) {
+      await new Promise((r) => setTimeout(r, 150));
+      await this.getDpi(controller); 
     }
   },
 
@@ -136,8 +127,7 @@ const LOGITECH_G502X = {
       this.adjustableDpiFeatureIndex,
       0x02, 
       [0x00, 0x00, 0x00], 
-      "GetSensorDPI",
-      true
+      "GetSensorDPI"
     );
   },
 
@@ -148,12 +138,12 @@ const LOGITECH_G502X = {
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
     
+    // Envia o envelope curto usando o Sensor Index que o mouse relatou
     const ok = await controller._sendHidppShort(
       this.adjustableDpiFeatureIndex,
       0x03,
       [this.currentSensorIndex, high, low],
-      `SetSensorDPI (${clamped})`,
-      false
+      `SetSensorDPI (${clamped})`
     );
     
     if (ok) {
@@ -166,14 +156,16 @@ const LOGITECH_G502X = {
   handleInputReport(controller, reportId, bytes) {
     const deviceIndexOk = this.knownDeviceIndexes.includes(bytes[0]);
 
+    // Captura de Erros do Firmware
     if (deviceIndexOk && bytes[1] === 0x8f) {
       console.warn(`[HID++ Erro do Firmware] Feature: 0x${bytes[2].toString(16)}, Código de Erro: 0x${bytes[3].toString(16)}`);
     }
 
+    // Resposta de leitura/escrita de DPI numérico
     if (deviceIndexOk && this.adjustableDpiFeatureIndex !== null && bytes[1] === this.adjustableDpiFeatureIndex && bytes.length > 5) {
       const func = bytes[2] >> 4;
       if (func === 0x02 || func === 0x03) {
-        this.currentSensorIndex = bytes[3]; 
+        this.currentSensorIndex = bytes[3]; // Grava o ID exato do sensor!
         const dpiValue = (bytes[4] << 8) | bytes[5];
         if (dpiValue > 0) {
           controller._emitDpiValue(dpiValue);
@@ -182,6 +174,7 @@ const LOGITECH_G502X = {
       }
     }
 
+    // Notificação de troca de estágio de DPI
     if (deviceIndexOk && reportId === HIDPP_LONG_REPORT_ID && bytes[1] === this.dpiEventFeatureIndex && bytes.length > 3) {
       const stage = bytes[3];
       if (stage >= 0 && stage < this.dpiStageCount) {
@@ -191,6 +184,7 @@ const LOGITECH_G502X = {
       }
     }
 
+    // Bateria
     if (deviceIndexOk && this.batteryFeatureIndex !== null && (reportId === HIDPP_SHORT_REPORT_ID || reportId === HIDPP_LONG_REPORT_ID) && bytes[1] === this.batteryFeatureIndex) {
       const func = bytes[2] >> 4;
       if (func === 0x01) { 
@@ -306,7 +300,7 @@ export class MouseController {
   _handleConnectionError(err) {
     let msg = err.name === "NotFoundError" ? "Nenhum mouse foi selecionado." :
               err.name === "SecurityError" ? "Acesso HID bloqueado pelo navegador." :
-              err.name === "InvalidStateError" ? "O dispositivo já está aberto por outra aba/processo." :
+              err.name === "InvalidStateError" ? "O dispositivo já está aberto por outra aba/processo. Feche o GHUB!" :
               `Erro ao conectar: ${err.message}`;
     this._error(msg);
   }
@@ -363,22 +357,20 @@ export class MouseController {
     if (stage !== null) this._emitDpiStage(stage);
   }
 
-  async _sendHidppShort(featureIndex, functionId, params, label, silentFail = false) {
+  async _sendHidppShort(featureIndex, functionId, params, label) {
     if (!this.device) return false;
     const data = buildHidppShortPacket(this.deviceIndex, featureIndex, functionId, params);
     try {
       await this.device.sendReport(HIDPP_SHORT_REPORT_ID, data);
       return true;
     } catch (err) {
-      if (!silentFail) {
-        this._error(`Falha ao enviar "${label}". O Windows pode estar bloqueando a porta USB direta.`);
-      }
+      this._error(`Falha ao enviar "${label}". Feche o Logitech G HUB.`);
       return false;
     }
   }
 
   async _logitechPing() {
-    await this._sendHidppShort(0x00, 0x01, [0x00, 0x00, 0x5a], "Ping (GetProtocolVersion)", true);
+    await this._sendHidppShort(0x00, 0x01, [0x00, 0x00, 0x5a], "Ping (GetProtocolVersion)");
   }
 
   async _logitechRequestBattery() {
@@ -387,8 +379,7 @@ export class MouseController {
       this.profile.batteryFeatureIndex,
       0x01, 
       [0x00, 0x00, 0x00],
-      "GetStatus (Unified Battery)",
-      true
+      "GetStatus (Unified Battery)"
     );
   }
 
