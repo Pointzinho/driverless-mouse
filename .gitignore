@@ -1,0 +1,8 @@
+# Pastas pesadas de compilação e dependências
+node_modules/
+dist/
+
+# Logs e arquivos temporários
+*.log
+.DS_Store
+.wine/

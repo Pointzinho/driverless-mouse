@@ -436,6 +436,23 @@
 (() => {
   "use strict";
 
+  // -----------------------------------------------------------------
+  // 1. TRAVA ABSOLUTA DE NAVEGAÇÃO DOS BOTÕES DO MOUSE
+  // -----------------------------------------------------------------
+  // Previne que botões laterais (Voltar/Avançar) voltem a página no navegador
+  window.addEventListener("auxclick", (e) => {
+      if (e.button === 3 || e.button === 4) {
+          e.preventDefault();
+          e.stopPropagation();
+      }
+  });
+
+  window.addEventListener("mouseup", (e) => {
+      if (e.button === 3 || e.button === 4) {
+          e.preventDefault();
+      }
+  });
+
   const els = {
     statusLine: document.getElementById("status-line"),
     statusText: document.getElementById("status-text"),

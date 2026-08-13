@@ -1,0 +1,27 @@
+{
+  "name": "driverless-mouse",
+  "version": "1.0.0",
+  "description": "Driver de mouse portátil",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.pointzinho.driverlessmouse",
+    "productName": "Driverless Mouse",
+    "artifactName": "DriverlessMouse_Beta.${ext}",
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "splashImage": null
+    }
+  },
+  "author": "Natan",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}
