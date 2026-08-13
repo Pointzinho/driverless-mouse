@@ -699,36 +699,62 @@
     const marker = dpiMarkers.querySelector(".dpi-marker");
     const point = marker?.querySelector(".dpi-marker-point");
 
-    if (point) {
-      point.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        point.setPointerCapture?.(event.pointerId);
-        draggingStage = {
-          physical: editingStage,
-          pointerId: event.pointerId
-        };
-      });
+    // O arraste não fica preso à bolinha. O usuário pode clicar/começar
+    // o arraste em qualquer ponto da área da barra e continuar movendo
+    // livremente para a esquerda/direita, mesmo que o cursor saia da linha.
+    const sliderWrap = document.getElementById("dpi-slider-wrap");
 
-      point.addEventListener("pointermove", (event) => {
+    if (sliderWrap) {
+      const updateFromPointer = (event) => {
         if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
 
-        const rect = document.getElementById("dpi-slider-wrap").getBoundingClientRect();
-        const percent = ((event.clientX - rect.left - 10) /
-          Math.max(1, rect.width - 20)) * 100;
+        const rect = sliderWrap.getBoundingClientRect();
+        const usableWidth = Math.max(1, rect.width - 20);
+
+        // A posição é calculada apenas pelo X. A altura do cursor não
+        // importa: acima, em cima ou abaixo da linha continua funcionando.
+        const percent =
+          ((event.clientX - rect.left - 10) / usableWidth) * 100;
 
         // IMPORTANTE: arrastar NÃO envia nada para o mouse.
         // Apenas atualiza o valor pendente e o campo de texto.
         setPendingDpi(percentToDpi(percent));
+      };
+
+      sliderWrap.addEventListener("pointerdown", (event) => {
+        // Só botão principal do mouse/toque.
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+
+        event.preventDefault();
+
+        draggingStage = {
+          physical: editingStage,
+          pointerId: event.pointerId
+        };
+
+        sliderWrap.setPointerCapture?.(event.pointerId);
+        updateFromPointer(event);
       });
 
-      point.addEventListener("pointerup", (event) => {
+      sliderWrap.addEventListener("pointermove", updateFromPointer);
+
+      const stopDragging = (event) => {
         if (!draggingStage || draggingStage.pointerId !== event.pointerId) return;
-        draggingStage = null;
-        point.releasePointerCapture?.(event.pointerId);
-        // Nenhuma chamada HID aqui. Só Enter ou "Aplicar DPI" confirma.
-      });
 
-      point.addEventListener("pointercancel", () => {
+        draggingStage = null;
+
+        try {
+          sliderWrap.releasePointerCapture?.(event.pointerId);
+        } catch (_) {
+          // O capture pode já ter sido liberado pelo navegador.
+        }
+
+        // Nenhuma chamada HID aqui. Só Enter ou "Aplicar DPI" confirma.
+      };
+
+      sliderWrap.addEventListener("pointerup", stopDragging);
+      sliderWrap.addEventListener("pointercancel", stopDragging);
+      sliderWrap.addEventListener("lostpointercapture", () => {
         draggingStage = null;
       });
     }
