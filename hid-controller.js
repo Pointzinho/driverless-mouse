@@ -60,7 +60,7 @@ const LOGITECH_G502X = {
   
   batteryFeatureIndex: null,
   adjustableDpiFeatureIndex: null, 
-  currentSensorIndex: 0x00, // Armazena o ID real do sensor
+  currentSensorIndex: 0x00, 
   
   dpiEventFeatureIndex: 0x09,     
   dpiStageCount: 5,
@@ -93,7 +93,7 @@ const LOGITECH_G502X = {
       timeout = setTimeout(() => {
         controller.device.removeEventListener("inputreport", listener);
         resolve(null);
-      }, 1500);
+      }, 1000);
 
       const high = (featureId >> 8) & 0xff;
       const low = featureId & 0xff;
@@ -105,10 +105,18 @@ const LOGITECH_G502X = {
     controller.deviceIndex = this.resolveDeviceIndex(controller.device.productId);
     
     await controller._logitechPing();
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 200));
 
-    this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201);
-    this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004);
+    // Tenta resolução dinâmica. Se falhar (como no modo cabo), usa os fallbacks fixos (0x07 e 0x06)
+    if (controller.device.productId === 0xc098) {
+      // Modo Cabo: Usa os índices padrão de fábrica mapeados no diagnóstico
+      this.adjustableDpiFeatureIndex = 0x07;
+      this.batteryFeatureIndex = 0x06;
+    } else {
+      // Modo Dongle: Resolve dinamicamente
+      this.adjustableDpiFeatureIndex = await this.resolveFeature(controller, 0x2201) || 0x07;
+      this.batteryFeatureIndex = await this.resolveFeature(controller, 0x1004) || 0x06;
+    }
 
     if (this.batteryFeatureIndex !== null) {
       await controller._logitechRequestBattery(); 
@@ -138,7 +146,6 @@ const LOGITECH_G502X = {
     const high = (clamped >> 8) & 0xff;
     const low = clamped & 0xff;
     
-    // Envia o envelope curto usando o Sensor Index que o mouse relatou
     const ok = await controller._sendHidppShort(
       this.adjustableDpiFeatureIndex,
       0x03,
@@ -156,16 +163,14 @@ const LOGITECH_G502X = {
   handleInputReport(controller, reportId, bytes) {
     const deviceIndexOk = this.knownDeviceIndexes.includes(bytes[0]);
 
-    // Captura de Erros do Firmware
     if (deviceIndexOk && bytes[1] === 0x8f) {
       console.warn(`[HID++ Erro do Firmware] Feature: 0x${bytes[2].toString(16)}, Código de Erro: 0x${bytes[3].toString(16)}`);
     }
 
-    // Resposta de leitura/escrita de DPI numérico
     if (deviceIndexOk && this.adjustableDpiFeatureIndex !== null && bytes[1] === this.adjustableDpiFeatureIndex && bytes.length > 5) {
       const func = bytes[2] >> 4;
       if (func === 0x02 || func === 0x03) {
-        this.currentSensorIndex = bytes[3]; // Grava o ID exato do sensor!
+        this.currentSensorIndex = bytes[3]; 
         const dpiValue = (bytes[4] << 8) | bytes[5];
         if (dpiValue > 0) {
           controller._emitDpiValue(dpiValue);
@@ -174,7 +179,6 @@ const LOGITECH_G502X = {
       }
     }
 
-    // Notificação de troca de estágio de DPI
     if (deviceIndexOk && reportId === HIDPP_LONG_REPORT_ID && bytes[1] === this.dpiEventFeatureIndex && bytes.length > 3) {
       const stage = bytes[3];
       if (stage >= 0 && stage < this.dpiStageCount) {
@@ -184,7 +188,6 @@ const LOGITECH_G502X = {
       }
     }
 
-    // Bateria
     if (deviceIndexOk && this.batteryFeatureIndex !== null && (reportId === HIDPP_SHORT_REPORT_ID || reportId === HIDPP_LONG_REPORT_ID) && bytes[1] === this.batteryFeatureIndex) {
       const func = bytes[2] >> 4;
       if (func === 0x01) { 
