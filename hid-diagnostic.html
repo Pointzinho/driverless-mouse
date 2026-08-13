@@ -611,6 +611,11 @@
       const isLogitech = device.vendorId === LOGITECH_VID;
       els.diVendorBadge.style.display = isLogitech ? "inline-block" : "none";
 
+      if (isLogitech && device.productId === 0xc547) {
+        // O mouse pareado no receiver C547 usa Device Index 0x01.
+        els.hidppDeviceIndex.value = "01";
+      }
+
       setStatus(true, "conectado");
       els.btnConnect.disabled = true;
       els.btnDisconnect.disabled = false;
@@ -763,83 +768,215 @@
   // então aparecem no log e na grade normalmente — não é preciso receiveFeatureReport.
   // ------------------------------------------------------------------
 
-  function buildHidppShortPacket(deviceIndex, featureIndex, functionId, params) {
+  function buildHidppShortPacket(deviceIndex, subId, regAddress, params) {
     const p = [0, 0, 0];
-    (params || []).forEach((v, i) => { if (i < 3) p[i] = v & 0xff; });
-    const funcByte = ((functionId & 0x0f) << 4) | (HIDPP_SOFTWARE_ID & 0x0f);
-    return new Uint8Array([deviceIndex & 0xff, featureIndex & 0xff, funcByte, ...p]);
+    (params || []).forEach((v, i) => {
+      if (i < 3) p[i] = v & 0xff;
+    });
+
+    return new Uint8Array([
+      deviceIndex & 0xff,
+      subId & 0xff,
+      regAddress & 0xff,
+      ...p,
+    ]);
   }
 
-  async function sendHidppShort(deviceIndex, featureIndex, functionId, params, label) {
+  function buildHidppLongPacket(deviceIndex, featureIndex, functionId, params) {
+    const p = new Array(16).fill(0);
+    (params || []).forEach((v, i) => {
+      if (i < 16) p[i] = v & 0xff;
+    });
+
+    const funcByte =
+      ((functionId & 0x0f) << 4) |
+      (HIDPP_SOFTWARE_ID & 0x0f);
+
+    return new Uint8Array([
+      deviceIndex & 0xff,
+      featureIndex & 0xff,
+      funcByte,
+      ...p,
+    ]);
+  }
+
+  async function sendHidppShort(
+    deviceIndex,
+    subId,
+    regAddress,
+    params,
+    label
+  ) {
     if (!device) return false;
-    const data = buildHidppShortPacket(deviceIndex, featureIndex, functionId, params);
+
+    const data = buildHidppShortPacket(
+      deviceIndex,
+      subId,
+      regAddress,
+      params
+    );
+
     try {
       await device.sendReport(HIDPP_SHORT, data);
-      appendSystemNote(`→ HID++ enviado: ${label} (feature idx 0x${toHex(featureIndex)}, função ${functionId}, dev idx 0x${toHex(deviceIndex)})`);
+
+      appendSystemNote(
+        `→ RAP curto 0x10 enviado: ${label} ` +
+        `(sub 0x${toHex(subId)}, reg 0x${toHex(regAddress)}, ` +
+        `dev idx 0x${toHex(deviceIndex)})`
+      );
+
       return true;
     } catch (err) {
-      let msg;
-      if (err.name === "InvalidStateError") {
-        msg = `✗ Falha ao enviar "${label}": interface ocupada. Confirme que o Logitech G HUB está fechado.`;
-      } else {
-        msg = `✗ Falha ao enviar "${label}": ${err.message}`;
-      }
-      appendSystemNote(msg);
+      appendSystemNote(
+        `✗ Falha ao enviar "${label}": ${err.message}`
+      );
+      return false;
+    }
+  }
+
+  async function sendHidppLong(
+    deviceIndex,
+    featureIndex,
+    functionId,
+    params,
+    label
+  ) {
+    if (!device) return false;
+
+    const data = buildHidppLongPacket(
+      deviceIndex,
+      featureIndex,
+      functionId,
+      params
+    );
+
+    try {
+      await device.sendReport(HIDPP_LONG, data);
+
+      appendSystemNote(
+        `→ FAP longo 0x11 enviado: ${label} ` +
+        `(feature idx 0x${toHex(featureIndex)}, ` +
+        `função ${functionId}, dev idx 0x${toHex(deviceIndex)})`
+      );
+
+      return true;
+    } catch (err) {
+      appendSystemNote(
+        `✗ Falha ao enviar "${label}": ${err.message}`
+      );
       return false;
     }
   }
 
   async function logitechHandshake() {
-    if (!device) { alert("Conecte um mouse primeiro."); return; }
+    if (!device) {
+      alert("Conecte um mouse primeiro.");
+      return;
+    }
+
     els.btnLogitechPing.disabled = true;
-    els.hidppProgress.textContent = "Enviando handshake HID++...";
+    els.hidppProgress.textContent =
+      "Enviando handshake HID++...";
 
-    const deviceIndex = parseHexInput(els.hidppDeviceIndex, 0xff);
+    const deviceIndex =
+      device.productId === 0xc547
+        ? 0x01
+        : parseHexInput(
+            els.hidppDeviceIndex,
+            0xff
+          );
 
-    // 1. Ping ao Root (feature idx 0, função 1 = GetProtocolVersion).
-    //    Além de confirmar a versão do protocolo, isso costuma "acordar" o
-    //    dispositivo e instruí-lo a começar a notificar mudanças.
-    await sendHidppShort(deviceIndex, 0x00, 0x01, [0x00, 0x00, 0x5a], "Ping (GetProtocolVersion)");
-    await new Promise((r) => setTimeout(r, 200));
+    // 1. GetProtocolVersion = RAP/Short 0x10.
+    await sendHidppShort(
+      deviceIndex,
+      0x00,
+      0x10,
+      [0x00, 0x00, 0x5a],
+      "Ping (GetProtocolVersion)"
+    );
 
-    // 2. Resolve o índice da feature Adjustable DPI (0x2201) via Root.GetFeature.
-    await sendHidppShort(deviceIndex, 0x00, 0x00, [0x22, 0x01, 0x00], "GetFeature Adjustable DPI (0x2201)");
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 150));
 
-    // 3. Resolve o índice da feature Unified Battery (0x1004) — substitui a antiga
-    //    Battery Unified Level Status (0x1000), não suportada em modelos mais recentes
-    //    como o G502 X (confirmado: Root retornou índice 0x00 para 0x1000).
-    await sendHidppShort(deviceIndex, 0x00, 0x00, [0x10, 0x04, 0x00], "GetFeature Unified Battery (0x1004)");
+    // 2. Root.GetFeature(0x2201) = FAP/Long 0x11.
+    await sendHidppLong(
+      deviceIndex,
+      0x00,
+      0x00,
+      [0x22, 0x01],
+      "GetFeature Adjustable DPI (0x2201)"
+    );
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    // 3. Root.GetFeature(0x1004) = FAP/Long 0x11.
+    await sendHidppLong(
+      deviceIndex,
+      0x00,
+      0x00,
+      [0x10, 0x04],
+      "GetFeature Unified Battery (0x1004)"
+    );
 
     els.btnLogitechPing.disabled = false;
     els.hidppProgress.textContent = "";
+
     appendSystemNote(
-      "Handshake enviado. Filtre o log por Report ID 0x10 para ver as respostas. " +
-      "Byte 1 de cada resposta = índice da feature encontrada (0x00 = não suportada/não encontrada). " +
-      "Os IDs de função para ler o valor de DPI/bateria dentro dessas features específicas variam por " +
-      "firmware — use esse índice junto com a grade de bytes para descobrir por tentativa."
+      "Handshake enviado. Para o G502 X via C547, " +
+      "GetFeature usa Report ID 0x11 e Device Index 0x01. " +
+      "Na resposta: byte 0 = device index, byte 1 = feature index, " +
+      "byte 2 = função/SW ID e byte 3 = índice resolvido pelo Root.GetFeature."
     );
   }
 
   // ------------------------------------------------------------------
-  // Console HID++ customizado — monta e envia um pacote curto (0x10)
+  // Console HID++ customizado — monta e envia um FAP longo (0x11)
   // com Feature Index / Function ID / Parâmetros escolhidos manualmente.
-  // Use isso para explorar funções dentro de uma feature já resolvida
-  // pelo handshake (ex: feature idx 07 = Adjustable DPI) sem editar código.
   // ------------------------------------------------------------------
 
   async function sendCustomHidppCommand() {
-    if (!device) { alert("Conecte um mouse primeiro."); return; }
+    if (!device) {
+      alert("Conecte um mouse primeiro.");
+      return;
+    }
 
-    const deviceIndex = parseHexInput(els.hidppDeviceIndex, 0xff);
-    const featureIndex = parseHexInput(els.customFeatureIndex, 0x00);
-    const functionId = parseHexInput(els.customFunctionId, 0x01) & 0x0f; // função ocupa só 4 bits
-    const p1 = parseHexInput(els.customParam1, 0x00);
-    const p2 = parseHexInput(els.customParam2, 0x00);
-    const p3 = parseHexInput(els.customParam3, 0x00);
+    const deviceIndex =
+      device.productId === 0xc547
+        ? 0x01
+        : parseHexInput(
+            els.hidppDeviceIndex,
+            0xff
+          );
 
-    const label = `Custom (feature idx 0x${toHex(featureIndex)}, função ${functionId}, params ${toHex(p1)} ${toHex(p2)} ${toHex(p3)})`;
-    await sendHidppShort(deviceIndex, featureIndex, functionId, [p1, p2, p3], label);
+    const featureIndex =
+      parseHexInput(
+        els.customFeatureIndex,
+        0x00
+      );
+
+    const functionId =
+      parseHexInput(
+        els.customFunctionId,
+        0x01
+      ) & 0x0f;
+
+    const p1 =
+      parseHexInput(els.customParam1, 0x00);
+    const p2 =
+      parseHexInput(els.customParam2, 0x00);
+    const p3 =
+      parseHexInput(els.customParam3, 0x00);
+
+    const label =
+      `Custom FAP (feature idx 0x${toHex(featureIndex)}, ` +
+      `função ${functionId}, params ${toHex(p1)} ${toHex(p2)} ${toHex(p3)})`;
+
+    await sendHidppLong(
+      deviceIndex,
+      featureIndex,
+      functionId,
+      [p1, p2, p3],
+      label
+    );
   }
 
   // ------------------------------------------------------------------
